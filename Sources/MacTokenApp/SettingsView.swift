@@ -11,6 +11,7 @@ struct SettingsView: View {
     let updateController: UpdateController
 
     @State private var automaticallyChecksForUpdates: Bool
+    @State private var showingOpenSourceLicenses = false
 
     init(settings: AppSettings, updateController: UpdateController) {
         self.settings = settings
@@ -121,6 +122,11 @@ struct SettingsView: View {
             Section(L10n.text("information")) {
                 LabeledContent(L10n.text("version"), value: versionText)
                 LabeledContent(L10n.text("license"), value: "MIT License")
+                LabeledContent(L10n.text("open_source_licenses")) {
+                    Button(L10n.text("show")) {
+                        showingOpenSourceLicenses = true
+                    }
+                }
                 LabeledContent(L10n.text("creator")) {
                     Link("@yuto_uehara_san", destination: Self.creatorURL)
                         .accessibilityHint(L10n.text("creator_link_hint"))
@@ -130,6 +136,10 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 520, height: 520)
         .environment(\.locale, Locale(identifier: settings.appLanguage.rawValue))
+        .sheet(isPresented: $showingOpenSourceLicenses) {
+            ThirdPartyLicensesView()
+                .environment(\.locale, Locale(identifier: settings.appLanguage.rawValue))
+        }
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
             automaticallyChecksForUpdates = updateController.automaticallyChecksForUpdates

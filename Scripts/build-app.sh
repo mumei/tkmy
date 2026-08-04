@@ -14,6 +14,7 @@ mkdir -p "$contents/MacOS" "$contents/Resources" "$contents/Frameworks"
 cp "$build_root/release/TKMY" "$contents/MacOS/TKMY"
 cp "$project_root/Resources/Info.plist" "$contents/Info.plist"
 cp "$project_root/Resources/AppIcon.icns" "$contents/Resources/AppIcon.icns"
+cp "$project_root/Resources/Sparkle-LICENSE.txt" "$contents/Resources/Sparkle-LICENSE.txt"
 cp -R "$build_root/release/TKMY_UsagePricing.bundle" "$contents/Resources/"
 
 if [[ -n "${TKMY_VERSION:-}" ]]; then
