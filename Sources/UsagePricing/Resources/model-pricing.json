@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "effectiveDate": "2026-08-03",
+  "provenance": [
+    {
+      "provider": "OpenAI",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-codex",
+      "retrievedAt": "2026-08-03",
+      "note": "GPT-5-Codex standard text-token pricing. The page lists input, cached input, and output; cache creation uses ordinary input pricing in this catalog."
+    },
+    {
+      "provider": "OpenAI",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.3-codex",
+      "retrievedAt": "2026-08-03",
+      "note": "GPT-5.3-Codex standard text-token pricing: $1.75 input, $0.175 cached input, and $14 output per million tokens."
+    },
+    {
+      "provider": "OpenAI",
+      "url": "https://developers.openai.com/api/docs/pricing",
+      "retrievedAt": "2026-08-03",
+      "note": "Standard short-context pricing for current GPT-5.4, GPT-5.5, and GPT-5.6 families. Long-context and non-standard service tiers are not inferred from local Codex logs."
+    },
+    {
+      "provider": "Anthropic",
+      "url": "https://docs.anthropic.com/en/docs/about-claude/pricing",
+      "retrievedAt": "2026-08-03",
+      "note": "Claude Sonnet 4.6 standard input/output and prompt-cache prices. Claude 4.6 includes the full 1M context window at standard pricing. Older long-context variants are intentionally left unpriced."
+    }
+  ],
+  "models": [
+    {
+      "canonicalName": "gpt-5-codex",
+      "aliases": ["gpt-5", "gpt-5-2025-08-07"],
+      "rates": {
+        "input": 1250000,
+        "output": 10000000,
+        "cacheCreate5m": 1250000,
+        "cacheCreate1h": 1250000,
+        "cacheRead": 125000
+      }
+    },
+    {
+      "canonicalName": "gpt-5.3-codex",
+      "aliases": [],
+      "rates": {
+        "input": 1750000,
+        "output": 14000000,
+        "cacheCreate5m": 1750000,
+        "cacheCreate1h": 1750000,
+        "cacheRead": 175000
+      }
+    },
+    {
+      "canonicalName": "gpt-5.4",
+      "aliases": [],
+      "rates": {
+        "input": 2500000,
+        "output": 15000000,
+        "cacheCreate5m": 2500000,
+        "cacheCreate1h": 2500000,
+        "cacheRead": 250000
+      }
+    },
+    {
+      "canonicalName": "gpt-5.4-mini",
+      "aliases": [],
+      "rates": {
+        "input": 750000,
+        "output": 4500000,
+        "cacheCreate5m": 750000,
+        "cacheCreate1h": 750000,
+        "cacheRead": 75000
+      }
+    },
+    {
+      "canonicalName": "gpt-5.5",
+      "aliases": [],
+      "rates": {
+        "input": 5000000,
+        "output": 30000000,
+        "cacheCreate5m": 5000000,
+        "cacheCreate1h": 5000000,
+        "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "gpt-5.6-sol",
+      "aliases": [],
+      "rates": {
+        "input": 5000000,
+        "output": 30000000,
+        "cacheCreate5m": 6250000,
+        "cacheCreate1h": 6250000,
+        "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "gpt-5.6-terra",
+      "aliases": [],
+      "rates": {
+        "input": 2000000,
+        "output": 12000000,
+        "cacheCreate5m": 2500000,
+        "cacheCreate1h": 2500000,
+        "cacheRead": 200000
+      }
+    },
+    {
+      "canonicalName": "gpt-5.6-luna",
+      "aliases": [],
+      "rates": {
+        "input": 200000,
+        "output": 1200000,
+        "cacheCreate5m": 250000,
+        "cacheCreate1h": 250000,
+        "cacheRead": 20000
+      }
+    },
+    {
+      "canonicalName": "claude-sonnet-4-6",
+      "aliases": ["claude-sonnet-4.6", "sonnet-4.6"],
+      "rates": {
+        "input": 3000000,
+        "output": 15000000,
+        "cacheCreate5m": 3750000,
+        "cacheCreate1h": 6000000,
+        "cacheRead": 300000
+      }
+    }
+  ]
+}

@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TKMY（トークン見えるやつ）技術設計書。CodexとClaude Codeのローカルトークン利用量と推定金額を可視化するmacOSメニューバーアプリ。">
+  <title>TKMY — 技術設計 v0.2</title>
+  <link rel="stylesheet" href="tokens.css">
+  <style>
+    /* Hallmark · macrostructure: Long Document · tone: technical editorial · anchor hue: cobalt
+     * pre-emit critique: P5 H5 E5 S5 R5 V5 · contrast: pass · mobile: pass
+     */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; overflow-x: clip; }
+    html { scroll-behavior: smooth; }
+    body { color: var(--color-ink-2); background: var(--color-paper); font-family: var(--font-body); font-size: var(--text-base); line-height: 1.65; }
+    a { color: var(--color-accent); text-underline-offset: 0.18em; }
+    a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+    a:active { transform: translateY(1px); }
+    code, pre, .mono { font-family: var(--font-mono); }
+    code { padding: var(--space-2xs) var(--space-xs); color: var(--color-ink); background: var(--color-paper-3); border-radius: var(--radius-sm); }
+    pre { margin: 0; padding: var(--space-lg); overflow-x: auto; color: var(--color-on-dark); background: var(--color-graphite); border-radius: var(--radius-md); line-height: 1.55; }
+    pre code { padding: 0; color: inherit; background: var(--color-transparent); }
+    h1, h2, h3, h4 { margin: 0; color: var(--color-ink); font-family: var(--font-display); font-style: normal; overflow-wrap: anywhere; min-width: 0; }
+    h1 { max-width: 13ch; font-size: var(--text-display); line-height: 1.02; letter-spacing: -0.055em; }
+    h2 { font-size: clamp(var(--text-xl), 4vw, var(--text-2xl)); line-height: 1.1; letter-spacing: -0.035em; }
+    h3 { font-size: var(--text-lg); line-height: 1.2; }
+    h4 { font-size: var(--text-md); line-height: 1.25; }
+    p { margin-block: var(--space-md) 0; }
+    ul, ol { margin-block: var(--space-md) 0; padding-inline-start: var(--space-xl); }
+    li + li { margin-block-start: var(--space-xs); }
+    .shell { width: min(100% - 2rem, 80rem); margin-inline: auto; }
+
+    .topbar { position: sticky; inset-block-start: 0; z-index: 20; color: var(--color-on-dark); background: var(--color-graphite); border-block-end: var(--rule-thin) solid var(--color-graphite-2); }
+    .topbar__inner { min-height: 3.5rem; display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
+    .brand { color: var(--color-on-dark); font-family: var(--font-display); font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .topbar__meta { display: flex; align-items: center; gap: var(--space-md); color: var(--color-on-dark-muted); font-size: var(--text-sm); }
+    .topbar__meta a { color: var(--color-on-dark); white-space: nowrap; }
+
+    .hero { padding-block: var(--space-3xl) var(--space-4xl); border-block-end: var(--rule-thin) solid var(--color-rule); }
+    .eyebrow { margin: 0 0 var(--space-md); color: var(--color-accent); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    .hero__lede { max-width: 62ch; margin-block-start: var(--space-xl); color: var(--color-muted); font-size: var(--text-md); }
+    .status-line { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-block-start: var(--space-xl); }
+    .status { padding: var(--space-2xs) var(--space-sm); color: var(--color-ink); background: var(--color-paper-2); border: var(--rule-thin) solid var(--color-rule); border-radius: var(--radius-sm); font-size: var(--text-xs); }
+
+    .document { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: var(--space-3xl); align-items: start; padding-block: var(--space-2xl) var(--space-4xl); }
+    .toc { position: sticky; inset-block-start: 5.5rem; }
+    .toc strong { display: block; margin-block-end: var(--space-sm); color: var(--color-ink); font-size: var(--text-sm); }
+    .toc ol { margin: 0; padding: 0; list-style: none; border-block-start: var(--rule-thin) solid var(--color-rule); }
+    .toc li { margin: 0; border-block-end: var(--rule-thin) solid var(--color-rule); }
+    .toc a { display: block; padding-block: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); text-decoration: none; white-space: nowrap; }
+    .toc a:hover { color: var(--color-ink); }
+    .article { min-width: 0; }
+    .chapter { padding-block: var(--space-2xl) var(--space-3xl); border-block-start: var(--rule-thin) solid var(--color-rule); scroll-margin-top: 5rem; }
+    .chapter:first-child { border-block-start: 0; padding-block-start: 0; }
+    .chapter__intro { max-width: 70ch; color: var(--color-muted); }
+
+    .decision-grid, .source-grid, .module-grid, .test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-lg); margin-block-start: var(--space-xl); }
+    .panel { padding: var(--space-lg); background: var(--color-paper-2); border-block-start: 3px solid var(--color-rule-2); }
+    .panel--accent { border-color: var(--color-accent); }
+    .panel p { color: var(--color-muted); }
+    .panel ul { padding-inline-start: var(--space-lg); }
+    .decision-list { margin: var(--space-xl) 0 0; border-block-start: var(--rule-thin) solid var(--color-rule-2); }
+    .decision-row { display: grid; grid-template-columns: minmax(9rem, 0.7fr) minmax(0, 2fr); gap: var(--space-lg); padding-block: var(--space-md); border-block-end: var(--rule-thin) solid var(--color-rule); }
+    .decision-row > * { margin: 0; }
+    .decision-row > strong { color: var(--color-ink); font-weight: 600; }
+    .decision-row > p { color: var(--color-muted); }
+
+    .flow { margin-block-start: var(--space-xl); padding: var(--space-lg); background: var(--color-graphite); border-radius: var(--radius-lg); }
+    .flow__row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-sm); align-items: stretch; }
+    .flow__node { min-height: 7rem; display: flex; flex-direction: column; justify-content: space-between; gap: var(--space-sm); padding: var(--space-md); color: var(--color-on-dark); background: var(--color-graphite-2); border: var(--rule-thin) solid var(--color-on-dark-muted); border-radius: var(--radius-sm); }
+    .flow__node strong { color: var(--color-on-dark); font-size: var(--text-sm); }
+    .flow__node span { color: var(--color-on-dark-muted); font-size: var(--text-xs); }
+    .flow__arrow { align-self: center; color: var(--color-on-dark-muted); text-align: center; }
+
+    .spec-wrap { margin-block-start: var(--space-xl); overflow-x: auto; border: var(--rule-thin) solid var(--color-rule); border-radius: var(--radius-md); }
+    table { width: 100%; min-width: 46rem; border-collapse: collapse; }
+    th, td { padding: var(--space-sm) var(--space-md); border-block-end: var(--rule-thin) solid var(--color-rule); text-align: start; vertical-align: top; }
+    th { color: var(--color-ink); background: var(--color-paper-2); font-size: var(--text-sm); }
+    td { color: var(--color-muted); }
+    tbody tr:last-child th, tbody tr:last-child td { border-block-end: 0; }
+    .contract { margin-block-start: var(--space-xl); padding: var(--space-lg); border-inline-start: 3px solid var(--color-accent); background: var(--color-accent-soft); }
+    .contract strong { color: var(--color-ink); }
+    .contract p { margin-block-start: var(--space-xs); }
+
+    .state-list { display: grid; gap: var(--space-xs); margin: var(--space-xl) 0 0; padding: 0; list-style: none; }
+    .state-list li { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: var(--space-md); margin: 0; padding: var(--space-sm) var(--space-md); background: var(--color-paper-2); border-inline-start: 3px solid var(--color-rule-2); }
+    .state-list strong { color: var(--color-ink); }
+    .state-list span { color: var(--color-muted); }
+    .repo-tree { margin-block-start: var(--space-xl); }
+    .source-note { color: var(--color-muted); font-size: var(--text-sm); }
+    .source-note a { white-space: nowrap; }
+    .footer { padding-block: var(--space-xl); color: var(--color-on-dark-muted); background: var(--color-graphite); }
+    .footer__inner { display: flex; justify-content: space-between; gap: var(--space-lg); }
+
+    @media (max-width: 60rem) {
+      .document { grid-template-columns: minmax(0, 1fr); }
+      .toc { display: none; }
+      .flow__row { grid-template-columns: minmax(0, 1fr); }
+      .flow__arrow { transform: rotate(90deg); }
+    }
+    @media (max-width: 40rem) {
+      .shell { width: min(100% - 1.5rem, 80rem); }
+      .brand__suffix { display: none; }
+      .topbar__meta span { display: none; }
+      .hero { padding-block: var(--space-2xl) var(--space-3xl); }
+      .decision-grid, .source-grid, .module-grid, .test-grid { grid-template-columns: minmax(0, 1fr); }
+      .decision-row, .state-list li { grid-template-columns: minmax(0, 1fr); gap: var(--space-xs); }
+      .footer__inner { display: grid; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__inner shell">
+      <a class="brand" href="#top">TKMY<span class="brand__suffix"> / Design</span></a>
+      <div class="topbar__meta"><span>TECH v0.2</span><a href="index.html">要件定義を開く</a></div>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero shell">
+      <p class="eyebrow">TKMY / トークン見えるやつ / technical design</p>
+      <h1>ローカルの利用記録を、静かに集計する。</h1>
+      <p class="hero__lede">CodexとClaude CodeのJSONL利用記録を端末内だけで解析し、2つの独立したメニューバー項目へトークン数と推定金額を反映する。設計の中心は、ソース別アダプター、冪等な差分集計、版管理された価格表、最小限の永続化である。</p>
+      <div class="status-line" aria-label="設計方針">
+        <span class="status">Swift 6</span><span class="status">AppKit + SwiftUI</span><span class="status">SQLite</span><span class="status">FSEvents</span><span class="status">USD estimate</span><span class="status">Sparkle 2</span><span class="status">Local only</span>
+      </div>
+    </section>
+
+    <div class="document shell">
+      <nav class="toc" aria-label="設計書の目次">
+        <strong>Technical design</strong>
+        <ol>
+          <li><a href="#decisions">設計判断</a></li>
+          <li><a href="#reference">ccusage参照範囲</a></li>
+          <li><a href="#architecture">アーキテクチャ</a></li>
+          <li><a href="#modules">モジュール</a></li>
+          <li><a href="#ingestion">ログ取得</a></li>
+          <li><a href="#normalization">正規化と重複排除</a></li>
+          <li><a href="#pricing">金額計算</a></li>
+          <li><a href="#storage">保存設計</a></li>
+          <li><a href="#ui">メニューバーUI</a></li>
+          <li><a href="#updates">更新と公開</a></li>
+          <li><a href="#quality">障害・テスト</a></li>
+          <li><a href="#repository">リポジトリ構成</a></li>
+          <li><a href="#open">未決事項</a></li>
+        </ol>
+      </nav>
+
+      <article class="article">
+        <section class="chapter" id="decisions">
+          <h2>設計判断</h2>
+          <p class="chapter__intro">MVPの責務を「ローカルログの読取・日別集計・USD金額推定・表示・公式更新」に限定する。金額は参考値として明示し、為替換算、クラウド送信、プロジェクト別分析は設計に含めない。</p>
+          <div class="decision-list">
+            <div class="decision-row"><strong>配布形態</strong><p>Mac App StoreではなくDeveloper IDによる直接配布。ログディレクトリへアクセスするためApp Sandboxは使用せず、Hardened Runtimeと公証を有効にする。</p></div>
+            <div class="decision-row"><strong>UI技術</strong><p>AppKitの<code>NSStatusItem</code>をCodex／Claude Code用に1つずつ生成し、<code>NSPopover</code>の内容をSwiftUIで構築する。</p></div>
+            <div class="decision-row"><strong>並行処理</strong><p><code>UsageCoordinator</code>をactorとし、ファイル監視・解析・SQLite書込を直列化する。UI更新だけを<code>@MainActor</code>へ送る。</p></div>
+            <div class="decision-row"><strong>永続化</strong><p>macOS標準SQLiteをWALモードで使用。生のプロンプト、回答、ソースコードは保存しない。</p></div>
+            <div class="decision-row"><strong>集計基準</strong><p>時刻はUTCで保存し、表示時のmacOSローカルタイムゾーンで日付へ変換する。タイムゾーン変更時は日別集計を再構築する。</p></div>
+            <div class="decision-row"><strong>金額基準</strong><p>ログ内の<code>costUSD</code>を優先し、存在しない記録は同梱したモデル別価格表からUSDを算出する。価格不明は0として扱わず、算出不能状態を保持する。</p></div>
+            <div class="decision-row"><strong>OSS方針</strong><p>アプリ、テストfixture、CI、署名を除く更新設定を単一リポジトリで公開。公式署名用の秘密情報だけをGitHub Environment Secretsへ置く。</p></div>
+          </div>
+        </section>
+
+        <section class="chapter" id="reference">
+          <h2>ccusage参照範囲</h2>
+          <p class="chapter__intro"><a href="https://github.com/ccusage/ccusage">ccusage/ccusage</a>は、ローカルのエージェント利用記録をソース別アダプターで読み、日・月・セッション単位へ集計するMITライセンスの実装である。本設計はデータ意味論とcost modeを参照し、CLIやRust実装そのものは取り込まない。</p>
+          <div class="spec-wrap" role="region" aria-label="ccusageとの対応表" tabindex="0">
+            <table>
+              <thead><tr><th>ccusageの考え方</th><th>TKMYで採用</th><th>TKMYで変更</th></tr></thead>
+              <tbody>
+                <tr><th>ソース別adapter</th><td>Codex／Claude Codeを別モジュールに分離</td><td>Rust crateではなくSwift protocol + concrete adapter</td></tr>
+                <tr><th>再帰的JSONL探索</th><td>既定パス、環境変数、複数ディレクトリを探索</td><td>常駐監視用のFSEventsとcursorを追加</td></tr>
+                <tr><th>ストリーミング解析</th><td>1行単位で壊れた行を隔離</td><td>全件レポートではなくSQLiteへ冪等upsert</td></tr>
+                <tr><th>ソース固有dedupe</th><td>Codex replayとClaude sidechainの重複を除外</td><td>再起動をまたぐstable event keyを保存</td></tr>
+                <tr><th>日付filter／timezone</th><td>UTC保存とローカル日付への変換</td><td>UIは当日と直近12か月だけをquery</td></tr>
+                <tr><th>cost mode</th><td>ログ記録済み金額を優先し、なければtokenから算出</td><td>利用者向けmode切替は設けずauto相当へ固定</td></tr>
+                <tr><th>モデル別価格</th><td>入力、出力、cache create／read、長文脈価格を分離</td><td>実行時の直接取得は行わず、ビルド時に検証したsnapshotを同梱</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="source-note">参照: <a href="https://github.com/ccusage/ccusage/tree/main/rust/adapters">Adapter structure</a> · <a href="https://github.com/ccusage/ccusage/tree/main/rust/adapters/codex">Codex adapter</a> · <a href="https://github.com/ccusage/ccusage/tree/main/rust/adapters/claude">Claude adapter</a> · <a href="https://github.com/ccusage/ccusage/blob/main/docs/guide/cost-modes.md">Cost modes</a> · <a href="https://github.com/ccusage/ccusage/blob/main/rust/crates/ccusage-core/src/pricing.rs">Pricing implementation</a></p>
+          <div class="contract"><strong>ライセンス境界</strong><p>アルゴリズムの考え方だけを再実装する。ccusageのコードを直接移植する場合は、MIT Licenseの著作権表示とライセンス文を<code>THIRD_PARTY_NOTICES.md</code>へ収録する。</p></div>
+        </section>
+
+        <section class="chapter" id="architecture">
+          <h2>アーキテクチャ</h2>
+          <p class="chapter__intro">ログ形式の変更をUIやDBへ波及させないため、入力をadapter境界で正規化する。UIは生ファイルを直接読まず、query serviceだけを参照する。</p>
+          <div class="flow" aria-label="データ処理フロー">
+            <div class="flow__row">
+              <div class="flow__node"><strong>JSONL sources</strong><span>~/.codex<br>~/.claude</span></div>
+              <div class="flow__arrow" aria-hidden="true">→</div>
+              <div class="flow__node"><strong>Source adapters</strong><span>discover · parse · dedupe</span></div>
+              <div class="flow__arrow" aria-hidden="true">→</div>
+              <div class="flow__node"><strong>UsageCoordinator</strong><span>normalize · transact · notify</span></div>
+            </div>
+            <div class="flow__row" style="margin-block-start: var(--space-sm)">
+              <div class="flow__node"><strong>SQLite store</strong><span>events · daily_usage · cursors</span></div>
+              <div class="flow__arrow" aria-hidden="true">→</div>
+              <div class="flow__node"><strong>UsageQuery + CostEngine</strong><span>tokens · USD estimate · coverage</span></div>
+              <div class="flow__arrow" aria-hidden="true">→</div>
+              <div class="flow__node"><strong>Menu bar UI</strong><span>2 status items · 2 popovers</span></div>
+            </div>
+          </div>
+          <div class="contract"><strong>一方向依存</strong><p><code>UI → Application → Domain ← Infrastructure</code>とする。DomainはAppKit、SwiftUI、SQLite、Sparkleをimportしない。</p></div>
+        </section>
+
+        <section class="chapter" id="modules">
+          <h2>モジュール責務</h2>
+          <div class="module-grid">
+            <div class="panel panel--accent"><h3>TKMYApp</h3><p>App lifecycle、2つのstatus item、popover、設定、Sparkle entry point。</p></div>
+            <div class="panel"><h3>UsageDomain</h3><p><code>UsageEvent</code>、<code>TokenBreakdown</code>、日別集計、meter scale。外部frameworkに依存しない。</p></div>
+            <div class="panel"><h3>UsageIngestion</h3><p>adapter protocol、Codex／Claude parser、FSEvents、cursor、破損行の診断。</p></div>
+            <div class="panel"><h3>UsageStore</h3><p>SQLite migration、transaction、upsert、12か月query、履歴削除。</p></div>
+            <div class="panel panel--accent"><h3>UsagePricing</h3><p>価格表snapshot、model alias、source金額優先、token種別ごとのUSD計算、算出率。</p></div>
+            <div class="panel"><h3>UpdateSupport</h3><p>Sparkle 2構成、手動確認、自動確認設定、feed URLと公開鍵。</p></div>
+            <div class="panel"><h3>Diagnostics</h3><p>件数・パス・offset・エラー種別だけを記録。JSONL本文はログへ出さない。</p></div>
+          </div>
+          <div class="spec-wrap" role="region" aria-label="主要protocol" tabindex="0">
+            <table>
+              <thead><tr><th>Protocol</th><th>入力</th><th>出力</th><th>保証</th></tr></thead>
+              <tbody>
+                <tr><th>UsageSourceAdapter</th><td>SourceLocation、FileCursor</td><td>AsyncThrowingStream&lt;NormalizedUsageEvent&gt;</td><td>source固有の重複を除外</td></tr>
+                <tr><th>UsageEventStore</th><td>NormalizedUsageEvent配列</td><td>inserted／ignored件数</td><td>eventKeyで冪等</td></tr>
+                <tr><th>UsageQuerying</th><td>source、date range、timezone</td><td>today／daily buckets</td><td>UIへ生レコードを返さない</td></tr>
+                <tr><th>CostResolving</th><td>model、token breakdown、sourceCostUSD</td><td>CostEstimate</td><td>価格不明を0ドルへ変換しない</td></tr>
+                <tr><th>SourceWatching</th><td>監視対象ディレクトリ</td><td>変更パスのdebounced stream</td><td>burstを1回のscanへ統合</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="chapter" id="ingestion">
+          <h2>ログ取得</h2>
+          <div class="source-grid">
+            <div class="panel panel--accent">
+              <h3>CodexAdapter</h3>
+              <ul>
+                <li><code>${CODEX_HOME:-~/.codex}/sessions/**/*.jsonl</code></li>
+                <li><code>archived_sessions/**/*.jsonl</code>も読む</li>
+                <li>同じ相対パスはactive sessionsを優先</li>
+                <li><code>event_msg / token_count</code>だけを抽出</li>
+                <li><code>last_token_usage</code>をturn差分として優先</li>
+                <li>累積値だけなら直前値との差を復元</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>ClaudeAdapter</h3>
+              <ul>
+                <li><code>~/.claude/projects/**/*.jsonl</code></li>
+                <li><code>~/.config/claude/projects/**/*.jsonl</code></li>
+                <li><code>CLAUDE_CONFIG_DIR</code>の複数パスに対応</li>
+                <li>nested sessionとlegacy flat fileを再帰探索</li>
+                <li>message usageとadvisor usageを別event化</li>
+                <li>壊れたJSONL行はskipし診断件数へ加算</li>
+              </ul>
+            </div>
+          </div>
+          <h3 style="margin-block-start: var(--space-2xl)">初回scanと差分scan</h3>
+          <ol class="state-list">
+            <li><strong>discovering</strong><span>既定パスと環境変数から存在するsource rootを解決する。</span></li>
+            <li><strong>indexing</strong><span>JSONLのpath、size、mtime、inodeを収集し、前回cursorと比較する。</span></li>
+            <li><strong>reading</strong><span>追記ファイルはlastOffsetから読む。置換・縮小されたファイルは先頭から再評価する。</span></li>
+            <li><strong>committing</strong><span>event upsert、daily aggregate、cursor更新を1 transactionで確定する。</span></li>
+            <li><strong>watching</strong><span>FSEventsをdebounceし、変更されたrootだけを再scanする。</span></li>
+          </ol>
+          <div class="contract"><strong>ファイルが書込途中の場合</strong><p>末尾の改行で閉じていない行は未確定としてcursorを進めず、次回変更時に再読する。1行のparse失敗でファイル全体を失敗させない。</p></div>
+        </section>
+
+        <section class="chapter" id="normalization">
+          <h2>正規化と重複排除</h2>
+          <pre><code>struct NormalizedUsageEvent: Sendable {
+  let eventKey: String
+  let source: UsageSource        // codex | claudeCode
+  let sessionID: String?
+  let occurredAt: Date           // UTC
+  let inputTokens: Int64
+  let cacheCreate5mTokens: Int64
+  let cacheCreate1hTokens: Int64
+  let cacheReadTokens: Int64
+  let outputTokens: Int64        // reasoningを含む
+  let reasoningOutputTokens: Int64?
+  let model: String?
+  let sourceCostMicrosUSD: Int64?
+  let originPathHash: String
+}</code></pre>
+          <div class="spec-wrap" role="region" aria-label="重複排除規則" tabindex="0">
+            <table>
+              <thead><tr><th>対象</th><th>判定</th><th>処理</th></tr></thead>
+              <tbody>
+                <tr><th>共通</th><td>同じstable eventKey</td><td>SQLite unique制約でignore</td></tr>
+                <tr><th>Codex累積値</th><td>current total − previous total</td><td>負値やresetは新しい系列として扱う</td></tr>
+                <tr><th>Codex subagent</th><td><code>task_started</code>または<code>trigger_turn=true</code>以前のreplay prefix</td><td>親履歴として除外</td></tr>
+                <tr><th>Codex resume</th><td>session_metaのcli_version</td><td>境界判定には使わず、実際のmarkerをscan</td></tr>
+                <tr><th>Claude sidechain</th><td>同一message IDのうち少なくとも1件が<code>isSidechain=true</code></td><td>parentを残してreplay copyを除外</td></tr>
+                <tr><th>Claude advisor</th><td><code>advisor_message</code>iteration</td><td>独立eventとして加算しtop-levelへ二重加算しない</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="contract"><strong>token mapping</strong><p>総量は<code>input + output</code>。cached inputはinputの内訳、reasoning outputはoutputの内訳として保持し、総量へ再加算しない。</p></div>
+        </section>
+
+        <section class="chapter" id="pricing">
+          <h2>金額計算</h2>
+          <p class="chapter__intro">金額は請求額ではなくUSDの推定値である。UIは必ず「推定」と表示し、価格表の日付と未算出レコードの有無を追跡可能にする。</p>
+          <ol class="state-list">
+            <li><strong>source</strong><span>イベントに<code>costUSD</code>相当があれば、その値を最優先する。</span></li>
+            <li><strong>calculate</strong><span>source金額がなければ、model aliasを解決して入力、出力、cache create 5分／1時間、cache readの各単価を適用する。</span></li>
+            <li><strong>tier</strong><span>モデルが長文脈価格を持つ場合は、価格表に記録したthresholdと課金方式をrequest単位で適用する。</span></li>
+            <li><strong>unknown</strong><span>modelまたは必要な単価が不明なら金額を<code>nil</code>とし、unknown event数とtoken数を集計する。</span></li>
+            <li><strong>aggregate</strong><span>全件算出可能なら通常金額、一部不明なら「$X.XX+／一部算出不可」、全件不明なら「算出不可」とする。</span></li>
+          </ol>
+          <div class="spec-wrap" role="region" aria-label="価格表の設計" tabindex="0">
+            <table>
+              <thead><tr><th>項目</th><th>方針</th><th>理由</th></tr></thead>
+              <tbody>
+                <tr><th>通貨</th><td>USD固定、内部値は整数micro-USD</td><td>浮動小数点誤差と為替レート依存を避ける</td></tr>
+                <tr><th>丸め</th><td><code>Decimal</code>で積算後、event単位でmicro-USDへhalf-up</td><td>同じ入力から常に同じ集計値を得る</td></tr>
+                <tr><th>価格源</th><td>OpenAI／Anthropic公式料金表の検証済みsnapshot</td><td>公開単価が確認できたモデルだけを算出対象にする</td></tr>
+                <tr><th>更新</th><td>CIで差分をreviewし、アプリreleaseへ同梱</td><td>実行時通信を増やさず再現可能にする</td></tr>
+                <tr><th>履歴再計算</th><td>catalog更新時にderived daily costを再構築</td><td>source eventを変更せず計算根拠を統一する</td></tr>
+                <tr><th>表示精度</th><td>通常は小数2桁、0.01 USD未満は<code>&lt;$0.01</code></td><td>ゼロとの誤認を防ぐ</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <pre><code>struct CostEstimate: Sendable {
+  let knownMicrosUSD: Int64
+  let unknownEventCount: Int
+  let unknownTokens: Int64
+  let basis: CostBasis          // source | catalog | mixed
+  let catalogVersion: String
+}</code></pre>
+          <div class="contract"><strong>価格表の信頼境界</strong><p>価格snapshotの取得元URL、取得日時、SHA-256、生成scriptを公開リポジトリへ保存する。自動更新PRはテストと人手reviewを通し、アプリが外部価格APIへ直接接続することはない。</p></div>
+        </section>
+
+        <section class="chapter" id="storage">
+          <h2>保存設計</h2>
+          <pre><code>usage_events(
+  event_key TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  session_id TEXT,
+  occurred_at_ms INTEGER NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  cache_create_5m_tokens INTEGER NOT NULL,
+  cache_create_1h_tokens INTEGER NOT NULL,
+  cache_read_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  reasoning_output_tokens INTEGER,
+  model TEXT,
+  source_cost_micros_usd INTEGER,
+  origin_path_hash TEXT NOT NULL
+)
+
+source_cursors(
+  source TEXT, path_hash TEXT, inode INTEGER,
+  size INTEGER, mtime_ms INTEGER, byte_offset INTEGER,
+  PRIMARY KEY(source, path_hash)
+)
+
+daily_usage(
+  local_day TEXT, timezone_id TEXT, source TEXT,
+  input_tokens INTEGER, cache_read_tokens INTEGER,
+  output_tokens INTEGER,
+  PRIMARY KEY(local_day, timezone_id, source)
+)
+
+daily_cost(
+  local_day TEXT, timezone_id TEXT, source TEXT,
+  known_micros_usd INTEGER NOT NULL,
+  unknown_event_count INTEGER NOT NULL,
+  unknown_tokens INTEGER NOT NULL,
+  pricing_catalog_version TEXT NOT NULL,
+  PRIMARY KEY(local_day, timezone_id, source)
+)</code></pre>
+          <ul>
+            <li>DB配置は<code>~/Library/Application Support/TKMY/usage.sqlite3</code>。</li>
+            <li>WAL、foreign keys、busy timeoutを起動時に設定する。</li>
+            <li>migrationは単調増加するschema versionで管理し、失敗時は旧DBを破壊しない。</li>
+            <li>「履歴を削除」はevents、daily usage、cursorをtransactionで削除し、次回scanの扱いを利用者へ明示する。</li>
+            <li>origin pathはSHA-256 hashのみ保存し、ユーザー名やproject pathをDBへ残さない。</li>
+            <li>価格表更新時は<code>daily_cost</code>だけを再構築し、<code>usage_events</code>とsource記録済み金額は変更しない。</li>
+          </ul>
+        </section>
+
+        <section class="chapter" id="ui">
+          <h2>メニューバーUI</h2>
+          <div class="decision-grid">
+            <div class="panel panel--accent"><h3>CodexStatusItem</h3><p>CodexがJSONLへ記録した一般週次利用制限の残量を表示する。開く詳細画面もCodexだけをqueryする。</p></div>
+            <div class="panel"><h3>ClaudeStatusItem</h3><p>Claude Code専用。Codexと同じview model protocolを使うが、状態とpopoverは共有しない。</p></div>
+          </div>
+          <div class="spec-wrap" role="region" aria-label="UI状態" tabindex="0">
+            <table>
+              <thead><tr><th>状態</th><th>メニューバー</th><th>Popover</th></tr></thead>
+              <tbody>
+                <tr><th>loading</th><td>前回値を維持</td><td>既存値を維持し、ヘッダー内の小さな進行表示だけを更新する。本文バナーは表示しない</td></tr>
+                <tr><th>ready</th><td>一般週次利用制限の残量（%）</td><td>当日内訳、推定USD、52週×7日、選択日詳細</td></tr>
+                <tr><th>partialCost</th><td>token表示は通常どおり</td><td>算出済み金額へ「+／一部算出不可」と価格不明モデル数</td></tr>
+                <tr><th>sourceMissing</th><td>空状態</td><td>探索した既定パスと設定導線</td></tr>
+                <tr><th>partialFailure</th><td>前回値＋警告</td><td>読めなかったファイル数。本文や絶対パスは表示しない</td></tr>
+                <tr><th>unavailable</th><td>—</td><td>DBまたは全source失敗と再試行</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <ul>
+            <li>hoverは800ms後、keyboard focusとclickは即時にpopoverを開く。</li>
+            <li>同時に開けるpopoverは1つ。Codexを開いた状態でClaudeを選ぶとCodexを閉じる。</li>
+            <li>詳細表示は<code>NSPopover</code>の自動位置補正を使わず、固定サイズの非アクティブ<code>NSPanel</code>を使用する。status itemの画面座標から中央直下を計算し、操作したディスプレイのvisible frame内へ8pt余白で収める。</li>
+            <li>Escape、外側click、status item再clickで閉じる。</li>
+            <li>非アクティブ状態でhover表示した場合も、表示中だけローカル／グローバルのmouse-downを監視し、最初の外側clickで閉じる。popover内と対象status itemのclickは除外する。</li>
+            <li>Codexの横棒と数値は、最新の<code>rate_limits</code>にある10,080分の一般週次枠を使い、<code>100 - used_percent</code>を「残り58%」の形式で表示する。モデル固有枠は一般枠と混在させない。</li>
+            <li>上限情報を取得できないツールでは推測値を作らず「残り—」とする。正確な当日token数、使用済み率、リセット日はツールチップに、推定金額は詳細画面に表示する。</li>
+            <li>設定画面から「カラーバー」「モノクロバー」「分割」「カラー分割」「ドット」「リング」「ゲージ」「バッテリー」「縦バー」「数字のみ」の10種類をプレビュー付きで選択でき、Codex／Claude Codeの両メニューへ即時反映する。カラーはCodexを青、Claude Codeをオレンジとする。ラベルと残量パーセントは個別に表示／非表示を選べ、グラフをラベルの左または右へ配置できる。両方の文字を隠すとグラフのみ、残量パーセントだけを隠すとラベルとグラフだけになる。ただし「数字のみ」で両方を隠した場合は、設定導線を失わないようソース名を表示する。</li>
+            <li>heatmapは12か月固定で1マス1日とする。期間内の最大トークン数を100%とする連続的な線形尺度で算出し、ティール、グリーン、イエロー、オレンジ、レッドのカラーレンジを補間して段階へ丸めない。色に加えてVoiceOver labelで正確な値を伝える。クリックした日は固定選択として保持する。各マスのhover中はその日を優先して下部の日別詳細へ即時表示し、hover終了時は最後にクリックした固定選択日へ戻す。</li>
+            <li>今日の4指標は1枚の概要面へまとめ、合計を26pt、入力・出力・推定金額を20ptのtabular numbersで横並び表示する。同じ概要面の右上に、今日を含む直近30日間の「直近30日の推定合計（USD）」を小数第2位まで表示する。月境界に関係なく30暦日を対象とし、価格不明の記録を含む場合は算出済み額に「+」を付け、全件算出不能なら「算出不可」とする。選択日の6指標は16ptの3列×2段とし、桁数によるフォント縮小を行わない。その下にモデル別トークン消費を能力クラス順の4列グリッドで折り返し表示し、各モデルの値は見出しと重複する<code>tokens</code>単位を付けず数値だけを表示する。Codexは高性能、標準、軽量、内部処理の順、Claude CodeはOpus、Sonnet、Haikuの順とし、同じクラスでは新しい世代を先にする。消費量によって並びを変えず、分類できないモデルと「モデル記録なし」は末尾へ置く。モデル情報がない日にも実データ1行分の高さを予約し、更新中スピナーと更新時刻にも同一寸法の領域を割り当てることで、選択日や更新状態にかかわらず日別詳細の表示位置を固定する。水平スクロールは使わない。価格表のaliasは正規モデル名へ統合し、利用記録にモデル名が含まれない分は「モデル記録なし」と表示してツールチップで意味を説明する。</li>
+            <li>heatmapのセル幅はpopoverの利用可能幅から動的に算出し、52週を左右の余白なく配置する。注意書きと価格表更新日は下端の固定フッターへ集約し、本文の高さを変えない。</li>
+            <li>heatmapの色相はtoken量を線形に表し、利用なしは中立色、利用量の少ない日をティール、最大の日をレッドとして5色間を連続補間する。Codex／Claude Codeで同一尺度を使い、相互比較できるようにする。金額は当日概要と選択日詳細へ別項目で表示し、同じ色尺度へ混在させない。</li>
+            <li>推定金額の補足から価格表の更新日、算出方法、価格不明モデルを確認できる。</li>
+            <li>各status itemの右クリックメニューからネイティブ設定ウィンドウを開く。ウィンドウは操作したstatus itemが属するディスプレイの表示可能領域中央へ配置する。</li>
+            <li>設定画面ではログイン時の起動、ホバー表示、自動更新確認、メーターデザイン、Codex／Claude Code各メニューの表示を即時反映する。設定導線を失わないよう、2つのメニューを同時には非表示にできない。情報セクションにはバージョン、MIT License、制作者だけを表示し、内部のデータ処理説明は置かない。制作者の<code>@yuto_uehara_san</code>は<code>https://x.com/yuto_uehara_san</code>へのリンクとする。</li>
+          </ul>
+        </section>
+
+        <section class="chapter" id="updates">
+          <h2>更新とOSS公開</h2>
+          <p class="chapter__intro">mac-capslockと同じくSparkle 2、GitHub Releases、GitHub Pages appcastを使う。ただし本プロジェクトはアプリ全体を公開し、非公開コード層を持たない。</p>
+          <ol class="state-list">
+            <li><strong>tag</strong><span><code>vX.Y.Z</code>の保護タグでrelease workflowを開始。</span></li>
+            <li><strong>verify</strong><span>unit、fixture、integration、SwiftLint、secret scanを実行。</span></li>
+            <li><strong>build</strong><span>arm64／x86_64のUniversal BinaryをRelease構成で生成。</span></li>
+            <li><strong>sign</strong><span>Developer ID署名、Hardened Runtime、Apple公証、stapleを確認。</span></li>
+            <li><strong>package</strong><span>ZIP生成後、Sparkle EdDSA署名を付与しDraft Releaseへ配置。</span></li>
+            <li><strong>publish</strong><span>Release公開後、最後にGitHub Pagesの<code>appcast-v1.xml</code>を更新。</span></li>
+          </ol>
+          <div class="decision-grid">
+            <div class="panel panel--accent"><h3>公開する</h3><ul><li>全ソース</li><li>build／test workflow</li><li>Sparkle公開鍵とfeed URL</li><li>appcast</li><li>release手順</li></ul></div>
+            <div class="panel"><h3>Secretsに置く</h3><ul><li>Developer ID証明書</li><li>証明書passphrase</li><li>Apple公証API key</li><li>Sparkle EdDSA秘密鍵</li></ul></div>
+          </div>
+          <div class="contract"><strong>ロールバック</strong><p>公開済みRelease資産は上書きしない。不具合版をappcastから外して未更新端末への配信を止め、更新済み端末には大きい<code>CFBundleVersion</code>の修正版を配信する。</p></div>
+        </section>
+
+        <section class="chapter" id="quality">
+          <h2>障害処理とテスト</h2>
+          <div class="test-grid">
+            <div class="panel panel--accent"><h3>Adapter fixture</h3><ul><li>Codex delta／cumulative</li><li>fork／subagent replay</li><li>Claude nested／flat</li><li>sidechain replay</li><li>malformed／partial line</li></ul></div>
+            <div class="panel"><h3>Store + pricing</h3><ul><li>同一eventの再投入</li><li>source cost優先</li><li>token種別／long-context計算</li><li>unknown model</li><li>catalog更新時の再集計</li></ul></div>
+            <div class="panel"><h3>UI</h3><ul><li>status itemの独立性</li><li>popover排他制御</li><li>52×7 heatmap</li><li>VoiceOver</li><li>light／dark</li></ul></div>
+            <div class="panel"><h3>Release</h3><ul><li>Universal architecture</li><li>codesign verify</li><li>spctl assess</li><li>stapler validate</li><li>Sparkle署名検証</li></ul></div>
+          </div>
+          <div class="contract"><strong>fixtureの安全条件</strong><p>実ユーザーのログをcommitしない。fixtureは最小の人工JSONLとし、prompt、response、project path、API keyを含めない。</p></div>
+        </section>
+
+        <section class="chapter" id="repository">
+          <h2>リポジトリ構成</h2>
+          <pre class="repo-tree"><code>tkmy/
+├── App/
+│   ├── TKMYApp.swift
+│   ├── AppDelegate.swift
+│   └── StatusItems/
+├── Sources/
+│   ├── UsageDomain/
+│   ├── UsageIngestion/
+│   │   ├── Codex/
+│   │   ├── ClaudeCode/
+│   │   └── Watching/
+│   ├── UsageStore/
+│   ├── UsagePricing/
+│   ├── UsageUI/
+│   └── UpdateSupport/
+├── Tests/
+│   ├── Fixtures/
+│   ├── AdapterTests/
+│   ├── StoreTests/
+│   └── UITests/
+├── .github/workflows/
+│   ├── ci.yml
+│   ├── release.yml
+│   └── update-pricing.yml
+├── Resources/Pricing/
+│   ├── model-pricing.json
+│   └── provenance.json
+├── appcast-v1.xml
+├── LICENSE
+├── THIRD_PARTY_NOTICES.md
+├── CONTRIBUTING.md
+├── SECURITY.md
+└── README.md</code></pre>
+        </section>
+
+        <section class="chapter" id="open">
+          <h2>実装前の未決事項</h2>
+          <div class="decision-list">
+            <div class="decision-row"><strong>OSSライセンス</strong><p>MIT Licenseを採用し、リポジトリ直下の<code>LICENSE</code>を正本とする。ccusageコードを直接利用する場合のMIT noticeは別途必要。</p></div>
+            <div class="decision-row"><strong>最低macOS</strong><p>SwiftUI API、ServiceManagement、Sparkle 2の対応範囲を踏まえてdeployment targetを決定する。</p></div>
+            <div class="decision-row"><strong>DB wrapper</strong><p>標準SQLite C APIを薄く包むか、OSS wrapperを採用するかを決める。依存追加時はライセンスと更新頻度を確認する。</p></div>
+            <div class="decision-row"><strong>Codex形式変更</strong><p>ccusageのfixtureを参考に、CLI versionではなくrecord shapeとmarkerで機能判定する方針を実装試験で確定する。</p></div>
+            <div class="decision-row"><strong>価格snapshotのライセンス</strong><p>LiteLLMとmodels.devの価格データについて、再配布条件とattributionを実装開始前に確認し、必要なnoticeを追加する。</p></div>
+            <div class="decision-row"><strong>履歴削除後</strong><p>削除直後に全ログを再取込するか、削除時点以前を無視するtombstoneを保持するかをUXとして決定する。</p></div>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer__inner shell"><span>TKMY · Technical Design v0.2</span><span>Updated 2026-08-05 · Reference: ccusage/ccusage</span></div>
+  </footer>
+</body>
+</html>

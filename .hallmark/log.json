@@ -1,0 +1,16 @@
+[
+  {
+    "date": "2026-08-03",
+    "macrostructure": "Long Document",
+    "theme": "Cobalt",
+    "enrichment": "Tier A CSS architecture flow",
+    "brief": "TKMY technical design v0.2 with ccusage-informed USD cost estimation"
+  },
+  {
+    "date": "2026-08-03",
+    "macrostructure": "Workbench",
+    "theme": "Cobalt",
+    "enrichment": "Tier A CSS interface mock",
+    "brief": "TKMY requirements v0.11 with tool-specific USD cost display"
+  }
+]
