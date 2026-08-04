@@ -1,44 +1,153 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix (for example, 0.1.0)
+        required: true
+        type: string
+      publish:
+        description: Publish the GitHub Release after notarization
+        required: true
+        default: true
+        type: boolean
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
+concurrency:
+  group: tkmy-production-release
+  cancel-in-progress: false
+
 jobs:
-  build:
+  release:
+    name: Build, sign, notarize, and release
     runs-on: macos-15
     environment: release
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: zsh {0}
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      DEVELOPER_ID_APPLICATION: "${{ vars.DEVELOPER_ID_APPLICATION || 'Developer ID Application: DONPOK INC. (276XKB235F)' }}"
+      NOTARY_KEY_ID: ${{ vars.NOTARY_KEY_ID || '9MV76G85UD' }}
+      NOTARY_ISSUER_ID: ${{ vars.NOTARY_ISSUER_ID || 'aa43b9f0-7ee4-4f65-a974-2926921ad865' }}
+      TKMY_FEED_URL: ${{ vars.TKMY_FEED_URL }}
+      SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+      CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+      CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+      NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Require main branch
+        run: |
+          if [[ "$GITHUB_REF_NAME" != "main" ]]; then
+            echo "Production releases must run from main." >&2
+            exit 1
+          fi
+
+      - name: Validate release inputs and secrets
+        run: |
+          if ! print -r -- "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "Version must be a semantic version without the v prefix." >&2
+            exit 1
+          fi
+          for name in CERTIFICATE_P12_BASE64 CERTIFICATE_PASSWORD NOTARY_KEY_BASE64; do
+            if [[ -z "${(P)name}" ]]; then
+              echo "GitHub Environment secret $name is required." >&2
+              exit 1
+            fi
+          done
+
+      - name: Check out source
+        uses: actions/checkout@v7
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
+
+      - name: Validate release scripts
+        run: zsh -n Scripts/*.sh
+
       - name: Test
         run: swift test
+
+      - name: Import Developer ID certificate
+        run: ./Scripts/import-signing-certificate.sh
+
       - name: Build app bundle
         env:
-          TKMY_FEED_URL: ${{ vars.TKMY_FEED_URL }}
-          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+          TKMY_VERSION: ${{ inputs.version }}
+          TKMY_BUILD_NUMBER: ${{ github.run_number }}
         run: ./Scripts/build-app.sh
-      - name: Import Developer ID certificate
-        env:
-          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-        run: ./Scripts/import-signing-certificate.sh
-      - name: Sign and notarize
-        env:
-          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-          NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+
+      - name: Sign and notarize app
         run: ./Scripts/sign-and-notarize.sh
-      - name: Package and sign update
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+
+      - name: Package ZIP
         run: ./Scripts/package-update.sh
-      - uses: softprops/action-gh-release@v2
+
+      - name: Create signed DMG
+        run: |
+          ./Scripts/create-dmg.sh \
+            .build/app/TKMY.app \
+            ".build/release-assets/TKMY-${RELEASE_VERSION}.dmg" \
+            "TKMY ${RELEASE_VERSION}"
+
+      - name: Notarize and staple DMG
+        run: |
+          ./Scripts/notarize-dmg.sh \
+            ".build/release-assets/TKMY-${RELEASE_VERSION}.dmg" \
+            .build/release-assets/dmg-notarization-result.json
+
+      - name: Upload notarized release candidate
+        uses: actions/upload-artifact@v7
         with:
-          draft: true
-          files: .build/release-assets/TKMY-*.zip
+          name: TKMY-${{ inputs.version }}-notarized
+          path: |
+            .build/release-assets/TKMY-${{ inputs.version }}.dmg
+            .build/release-assets/TKMY-${{ inputs.version }}.dmg.sha256
+            .build/release-assets/TKMY-${{ inputs.version }}.zip
+            .build/release-assets/TKMY-${{ inputs.version }}.zip.sha256
+            .build/release-assets/*-notarization-result.json
+            .build/release-assets/*-notarization-result-log.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          assets=(
+            ".build/release-assets/TKMY-${RELEASE_VERSION}.dmg"
+            ".build/release-assets/TKMY-${RELEASE_VERSION}.dmg.sha256"
+            ".build/release-assets/TKMY-${RELEASE_VERSION}.zip"
+            ".build/release-assets/TKMY-${RELEASE_VERSION}.zip.sha256"
+          )
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+            exit 0
+          fi
+
+          release_args=(
+            "$tag"
+            "${assets[@]}"
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "TKMY ${RELEASE_VERSION}"
+            --generate-notes
+          )
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "${release_args[@]}"

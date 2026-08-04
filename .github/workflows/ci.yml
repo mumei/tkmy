@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -12,10 +13,26 @@ jobs:
   test:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
       - name: Test
         run: swift test
-      - name: Release build
-        run: swift build -c release
+      - name: Build release app bundle
+        run: ./Scripts/build-app.sh
+      - name: Validate app bundle
+        run: |
+          test -x .build/app/TKMY.app/Contents/MacOS/TKMY
+          plutil -lint .build/app/TKMY.app/Contents/Info.plist
+          codesign --verify --deep --strict .build/app/TKMY.app
+      - name: Package release build
+        run: ./Scripts/package-build.sh
+      - name: Upload release build
+        uses: actions/upload-artifact@v7
+        with:
+          name: TKMY-${{ github.sha }}
+          path: |
+            .build/release-assets/TKMY-*.zip
+            .build/release-assets/TKMY-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

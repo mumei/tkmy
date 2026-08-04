@@ -29,7 +29,11 @@ swift test --disable-sandbox --scratch-path .build -Xcc -fmodules-cache-path=.bu
 open '.build/app/TKMY.app'
 ```
 
-初回ビルド時に[Sparkle 2](https://github.com/sparkle-project/Sparkle)を取得します。生成される`.app`は未署名の開発用ビルドです。公式配布版ではDeveloper IDによる署名、Appleの公証、Sparkle EdDSA署名が必要です。
+初回ビルド時に[Sparkle 2](https://github.com/sparkle-project/Sparkle)を取得します。生成される`.app`には開発用のad-hoc署名を付けます。公式配布版ではDeveloper IDによる署名、Appleの公証、Sparkle EdDSA署名が必要です。
+
+[CIワークフロー](https://github.com/mumei/tkmy/actions/workflows/ci.yml)は手動でも実行できます。テスト後にリリース構成の`TKMY.app`を生成し、ad-hoc署名済みZIPとSHA-256チェックサムを14日間ダウンロード可能なartifactとして保存します。
+
+公式リリースは[Releaseワークフロー](https://github.com/mumei/tkmy/actions/workflows/release.yml)からバージョンを指定して実行します。GitHub ActionsがアプリのDeveloper ID署名とApple公証を行い、Applicationsリンク付きDMGを作成してDMG自体も公証した後、DMG・ZIP・SHA-256チェックサムをGitHub Releasesへ公開します。GitHubの`release` Environmentには`CERTIFICATE_P12_BASE64`、`CERTIFICATE_PASSWORD`、`NOTARY_KEY_BASE64`の登録が必要です。公証のKey ID、Issuer ID、Developer ID名はRepository Variablesで上書きできます。
 
 ## ローカルデータの参照先
 

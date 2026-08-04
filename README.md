@@ -29,7 +29,11 @@ swift test --disable-sandbox --scratch-path .build -Xcc -fmodules-cache-path=.bu
 open '.build/app/TKMY.app'
 ```
 
-The first build resolves [Sparkle 2](https://github.com/sparkle-project/Sparkle). The generated `.app` is unsigned. Official releases must use Developer ID signing, notarization, and Sparkle EdDSA signing.
+The first build resolves [Sparkle 2](https://github.com/sparkle-project/Sparkle). The generated `.app` uses an ad-hoc development signature. Official releases must use Developer ID signing, notarization, and Sparkle EdDSA signing.
+
+The [CI workflow](https://github.com/mumei/tkmy/actions/workflows/ci.yml) can also be run manually. It tests the project, builds the release `TKMY.app`, and uploads an ad-hoc signed ZIP plus its SHA-256 checksum as a workflow artifact for 14 days.
+
+Official releases are created manually from the [Release workflow](https://github.com/mumei/tkmy/actions/workflows/release.yml). After a version is entered, GitHub Actions builds and Developer ID-signs the app, notarizes it with Apple, creates and notarizes an Applications-link DMG, and publishes the DMG, ZIP, and SHA-256 checksums to GitHub Releases. The `release` environment must contain `CERTIFICATE_P12_BASE64`, `CERTIFICATE_PASSWORD`, and `NOTARY_KEY_BASE64`. The notarization Key ID, Issuer ID, and Developer ID identity can be overridden with repository variables.
 
 ## Local data sources
 
