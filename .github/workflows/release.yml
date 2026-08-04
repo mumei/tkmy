@@ -73,6 +73,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Validate ChangeLog
+        run: |
+          change_log_path="$GITHUB_WORKSPACE/changeLog/${RELEASE_VERSION}.md"
+          Scripts/validate-changelog.sh "$change_log_path" "$RELEASE_VERSION"
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
 
@@ -131,6 +136,7 @@ jobs:
           IS_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           tag="v${RELEASE_VERSION}"
+          change_log_path="$GITHUB_WORKSPACE/changeLog/${RELEASE_VERSION}.md"
           assets=(
             ".build/release-assets/TKMY-${RELEASE_VERSION}.dmg"
             ".build/release-assets/TKMY-${RELEASE_VERSION}.dmg.sha256"
@@ -139,6 +145,10 @@ jobs:
           )
 
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "TKMY ${RELEASE_VERSION}" \
+              --notes-file "$change_log_path"
             gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
             exit 0
           fi
@@ -149,7 +159,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY"
             --target "$GITHUB_SHA"
             --title "TKMY ${RELEASE_VERSION}"
-            --generate-notes
+            --notes-file "$change_log_path"
           )
           if [[ "$IS_PRERELEASE" == "true" ]]; then
             release_args+=(--prerelease)

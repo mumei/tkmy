@@ -16,6 +16,19 @@ jobs:
       - uses: actions/checkout@v7
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - name: Validate ChangeLogs
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          change_logs=(changeLog/*.md(N))
+          if (( ${#change_logs[@]} == 0 )); then
+            echo "No versioned ChangeLogs were found." >&2
+            exit 1
+          fi
+          for path in "${change_logs[@]}"; do
+            version="${path:t:r}"
+            Scripts/validate-changelog.sh "$path" "$version"
+          done
       - name: Test
         run: swift test
       - name: Build release app bundle
