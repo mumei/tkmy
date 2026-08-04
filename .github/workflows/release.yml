@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
@@ -35,7 +37,7 @@ jobs:
       run:
         shell: zsh {0}
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_SOURCE_VERSION: ${{ inputs.version || github.ref_name }}
       DEVELOPER_ID_APPLICATION: "${{ vars.DEVELOPER_ID_APPLICATION || 'Developer ID Application: DONPOK INC. (276XKB235F)' }}"
       NOTARY_KEY_ID: ${{ vars.NOTARY_KEY_ID || '9MV76G85UD' }}
       NOTARY_ISSUER_ID: ${{ vars.NOTARY_ISSUER_ID || 'aa43b9f0-7ee4-4f65-a974-2926921ad865' }}
@@ -46,19 +48,21 @@ jobs:
       NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
     steps:
-      - name: Require main branch
+      - name: Validate release source
         run: |
-          if [[ "$GITHUB_REF_NAME" != "main" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
             echo "Production releases must run from main." >&2
             exit 1
           fi
 
       - name: Validate release inputs and secrets
         run: |
-          if ! print -r -- "$RELEASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+          release_version="${RELEASE_SOURCE_VERSION#v}"
+          if ! print -r -- "$release_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
             echo "Version must be a semantic version without the v prefix." >&2
             exit 1
           fi
+          echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
           for name in CERTIFICATE_P12_BASE64 CERTIFICATE_PASSWORD NOTARY_KEY_BASE64; do
             if [[ -z "${(P)name}" ]]; then
               echo "GitHub Environment secret $name is required." >&2
@@ -82,10 +86,10 @@ jobs:
         run: ./Scripts/import-signing-certificate.sh
 
       - name: Build app bundle
-        env:
-          TKMY_VERSION: ${{ inputs.version }}
-          TKMY_BUILD_NUMBER: ${{ github.run_number }}
-        run: ./Scripts/build-app.sh
+        run: |
+          TKMY_VERSION="$RELEASE_VERSION" \
+          TKMY_BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
+          ./Scripts/build-app.sh
 
       - name: Sign and notarize app
         run: ./Scripts/sign-and-notarize.sh
@@ -109,19 +113,19 @@ jobs:
       - name: Upload notarized release candidate
         uses: actions/upload-artifact@v7
         with:
-          name: TKMY-${{ inputs.version }}-notarized
+          name: TKMY-${{ inputs.version || github.ref_name }}-notarized
           path: |
-            .build/release-assets/TKMY-${{ inputs.version }}.dmg
-            .build/release-assets/TKMY-${{ inputs.version }}.dmg.sha256
-            .build/release-assets/TKMY-${{ inputs.version }}.zip
-            .build/release-assets/TKMY-${{ inputs.version }}.zip.sha256
+            .build/release-assets/TKMY-*.dmg
+            .build/release-assets/TKMY-*.dmg.sha256
+            .build/release-assets/TKMY-*.zip
+            .build/release-assets/TKMY-*.zip.sha256
             .build/release-assets/*-notarization-result.json
             .build/release-assets/*-notarization-result-log.json
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: ${{ inputs.publish }}
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         env:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ inputs.prerelease }}
