@@ -33,7 +33,7 @@ open '.build/app/TKMY.app'
 
 [CIワークフロー](https://github.com/mumei/tkmy/actions/workflows/ci.yml)は手動でも実行できます。テスト後にリリース構成の`TKMY.app`を生成し、ad-hoc署名済みZIPとSHA-256チェックサムを14日間ダウンロード可能なartifactとして保存します。
 
-公式リリースは[Releaseワークフロー](https://github.com/mumei/tkmy/actions/workflows/release.yml)からバージョンを指定して実行します。リリース前に`changeLog/<バージョン>.md`を追加してください。11言語の内容を検証し、そのままGitHub Release本文へ反映します。GitHub ActionsがアプリのDeveloper ID署名とApple公証を行い、Applicationsリンク付きDMGを作成してDMG自体も公証した後、DMG・ZIP・SHA-256チェックサムをGitHub Releasesへ公開します。GitHubの`release` Environmentには`CERTIFICATE_P12_BASE64`、`CERTIFICATE_PASSWORD`、`NOTARY_KEY_BASE64`の登録が必要です。公証のKey ID、Issuer ID、Developer ID名はRepository Variablesで上書きできます。
+公式リリースは[Releaseワークフロー](https://github.com/mumei/tkmy/actions/workflows/release.yml)からバージョンを指定して実行します。リリース前に`changeLog/<バージョン>.md`を追加してください。11言語の内容を検証し、GitHub Release本文とSparkleの更新内容へ反映します。GitHub ActionsがアプリのDeveloper ID署名とApple公証を行い、Applicationsリンク付きDMGを作成してDMG自体も公証した後、DMG・ZIP・SHA-256チェックサム・署名付き`appcast.xml`をGitHub Releasesへ公開します。GitHubの`release` EnvironmentにはSecretsとして`CERTIFICATE_P12_BASE64`、`CERTIFICATE_PASSWORD`、`NOTARY_KEY_BASE64`、`SPARKLE_PRIVATE_KEY`、Variablesとして`TKMY_FEED_URL`、`SPARKLE_PUBLIC_KEY`の登録が必要です。公証のKey ID、Issuer ID、Developer ID名はRepository Variablesで上書きできます。
 
 ## ローカルデータの参照先
 

@@ -63,9 +63,15 @@ jobs:
             exit 1
           fi
           echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
-          for name in CERTIFICATE_P12_BASE64 CERTIFICATE_PASSWORD NOTARY_KEY_BASE64; do
+          for name in CERTIFICATE_P12_BASE64 CERTIFICATE_PASSWORD NOTARY_KEY_BASE64 SPARKLE_PRIVATE_KEY; do
             if [[ -z "${(P)name}" ]]; then
               echo "GitHub Environment secret $name is required." >&2
+              exit 1
+            fi
+          done
+          for name in TKMY_FEED_URL SPARKLE_PUBLIC_KEY; do
+            if [[ -z "${(P)name}" ]]; then
+              echo "GitHub Environment variable $name is required." >&2
               exit 1
             fi
           done
@@ -102,6 +108,13 @@ jobs:
       - name: Package ZIP
         run: ./Scripts/package-update.sh
 
+      - name: Validate Sparkle appcast
+        run: |
+          Scripts/validate-appcast.sh \
+            .build/release-assets/appcast.xml \
+            "$RELEASE_VERSION" \
+            "$GITHUB_REPOSITORY"
+
       - name: Create signed DMG
         run: |
           ./Scripts/create-dmg.sh \
@@ -124,6 +137,7 @@ jobs:
             .build/release-assets/TKMY-*.dmg.sha256
             .build/release-assets/TKMY-*.zip
             .build/release-assets/TKMY-*.zip.sha256
+            .build/release-assets/appcast.xml
             .build/release-assets/*-notarization-result.json
             .build/release-assets/*-notarization-result-log.json
           if-no-files-found: error
@@ -142,6 +156,7 @@ jobs:
             ".build/release-assets/TKMY-${RELEASE_VERSION}.dmg.sha256"
             ".build/release-assets/TKMY-${RELEASE_VERSION}.zip"
             ".build/release-assets/TKMY-${RELEASE_VERSION}.zip.sha256"
+            ".build/release-assets/appcast.xml"
           )
 
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
