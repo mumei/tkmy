@@ -51,7 +51,7 @@ final class StatusItemController: NSObject {
             button.target = self
             button.action = #selector(statusItemPressed(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "\(viewModel.source.displayName)のトークン消費"
+            button.toolTip = L10n.text("token_usage_tooltip", viewModel.source.displayName)
             button.addTrackingArea(NSTrackingArea(
                 rect: button.bounds,
                 options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -90,6 +90,10 @@ final class StatusItemController: NSObject {
             .sink { [weak self] _ in self?.updateTitle() }
             .store(in: &cancellables)
         settings.$meterContentOrder
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateTitle() }
+            .store(in: &cancellables)
+        settings.$appLanguage
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateTitle() }
             .store(in: &cancellables)
@@ -144,19 +148,19 @@ final class StatusItemController: NSObject {
 
     private func showMenu(from button: NSStatusBarButton) {
         let menu = NSMenu()
-        let refresh = NSMenuItem(title: "再集計", action: #selector(refreshNow), keyEquivalent: "r")
+        let refresh = NSMenuItem(title: L10n.text("refresh"), action: #selector(refreshNow), keyEquivalent: "r")
         refresh.target = self
         menu.addItem(refresh)
         menu.addItem(.separator())
-        let settings = NSMenuItem(title: "設定…", action: #selector(showSettings), keyEquivalent: ",")
+        let settings = NSMenuItem(title: L10n.text("settings"), action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
-        let update = NSMenuItem(title: "アップデートを確認…", action: #selector(checkForUpdates), keyEquivalent: "")
+        let update = NSMenuItem(title: L10n.text("check_for_updates"), action: #selector(checkForUpdates), keyEquivalent: "")
         update.target = self
         update.isEnabled = updateController.isConfigured
         menu.addItem(update)
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "TKMYを終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L10n.text("quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(quit)
         statusItem.menu = menu
@@ -184,20 +188,23 @@ final class StatusItemController: NSObject {
             let used = Self.percentageText(limit.usedPercent)
             applyMeterStyle(remainingPercent: limit.remainingPercent, label: remaining)
 
-            var details = ["週次利用制限 残り\(remaining)", "使用\(used)"]
+            var details = [L10n.text("weekly_remaining", remaining), L10n.text("used_format", used)]
             if let resetsAt = limit.resetsAt {
-                details.append("リセット \(resetsAt.formatted(.dateTime.month().day()))")
+                let resetDate = resetsAt.formatted(.dateTime.month().day().locale(L10n.locale))
+                details.append(L10n.text("reset_format", resetDate))
             }
             if let total {
-                details.append("今日 \(total.formatted())トークン")
+                details.append(L10n.text("today_tokens", total.formatted(.number.locale(L10n.locale))))
             }
             let detail = details.joined(separator: "・")
             statusItem.button?.toolTip = detail
             statusItem.button?.setAccessibilityLabel("\(shortName)、\(detail)")
         } else {
             applyMeterStyle(remainingPercent: 0, label: "—")
-            let tokenDetail = total.map { "・今日 \($0.formatted())トークン" } ?? ""
-            let detail = "利用上限情報なし\(tokenDetail)"
+            let tokenDetail = total.map {
+                "・" + L10n.text("today_tokens", $0.formatted(.number.locale(L10n.locale)))
+            } ?? ""
+            let detail = L10n.text("no_limit") + tokenDetail
             statusItem.button?.toolTip = detail
             statusItem.button?.setAccessibilityLabel("\(shortName)、\(detail)")
         }
@@ -213,7 +220,7 @@ final class StatusItemController: NSObject {
             source: viewModel.source
         )
         let sourceLabel = settings.showsMenuLabel ? shortName : ""
-        let remainingLabel = settings.showsRemainingPercentage ? "残り\(label)" : ""
+        let remainingLabel = settings.showsRemainingPercentage ? L10n.text("remaining_format", label) : ""
         var title = [sourceLabel, remainingLabel].filter { !$0.isEmpty }.joined(separator: " ")
 
         // A text-only style must retain one visible, clickable status item.

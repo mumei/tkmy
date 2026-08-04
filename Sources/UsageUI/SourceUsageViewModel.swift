@@ -179,7 +179,7 @@ public final class SourceUsageViewModel: ObservableObject {
 
     private func apply(snapshot: SourceUsageSnapshot) {
         guard snapshot.source == source else {
-            setUnavailable(reason: "取得したデータのソースが一致しません。")
+            setUnavailable(reason: L10n.text("source_mismatch"))
             return
         }
 

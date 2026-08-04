@@ -2,6 +2,36 @@ import XCTest
 @testable import UsageDomain
 
 final class UsageModelsTests: XCTestCase {
+    func testLocalizationSupportsSameElevenLanguagesAsCapswitch() {
+        XCTAssertEqual(AppLanguage.allCases.count, 11)
+        for language in AppLanguage.allCases {
+            XCTAssertNotEqual(L10n.text("settings_title", language: language), "settings_title")
+            XCTAssertFalse(language.nativeName.isEmpty)
+        }
+    }
+
+    func testLocalizationFormatsArgumentsAndTraditionalChinese() {
+        XCTAssertEqual(
+            L10n.text("remaining_format", language: .english, "58%"),
+            "58% left"
+        )
+        XCTAssertEqual(
+            L10n.text("remaining_format", language: .japanese, "58%"),
+            "残り58%"
+        )
+        XCTAssertEqual(
+            L10n.text("settings_title", language: .traditionalChinese),
+            "TKMY 設定"
+        )
+    }
+
+    func testSystemLanguageSelectsSupportedLanguageAndChineseScript() {
+        XCTAssertEqual(AppLanguage.systemDefault(preferredLanguages: ["de-DE", "en-US"]), .german)
+        XCTAssertEqual(AppLanguage.systemDefault(preferredLanguages: ["zh-TW"]), .traditionalChinese)
+        XCTAssertEqual(AppLanguage.systemDefault(preferredLanguages: ["zh-CN"]), .simplifiedChinese)
+        XCTAssertEqual(AppLanguage.systemDefault(preferredLanguages: ["pt-BR"]), .english)
+    }
+
     func testTokenBreakdownAddsAllCategories() {
         let lhs = TokenBreakdown(input: 1, cacheCreate5m: 2, cacheCreate1h: 3, cacheRead: 4, output: 5, reasoningOutput: 6)
         let rhs = TokenBreakdown(input: 10, cacheCreate5m: 20, cacheCreate1h: 30, cacheRead: 40, output: 50, reasoningOutput: 60)

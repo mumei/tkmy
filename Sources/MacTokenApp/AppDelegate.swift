@@ -111,9 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func presentStartupFailure(_ error: Error) {
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = "TKMYを起動できません"
+        alert.messageText = L10n.text("startup_failed")
         alert.informativeText = error.localizedDescription
-        alert.addButton(withTitle: "終了")
+        alert.addButton(withTitle: L10n.text("exit"))
         alert.runModal()
         NSApp.terminate(nil)
     }

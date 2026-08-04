@@ -13,8 +13,8 @@ final class AppSettings: ObservableObject {
 
         var displayName: String {
             switch self {
-            case .graphLeading: "グラフを左に表示"
-            case .graphTrailing: "グラフを右に表示"
+            case .graphLeading: L10n.text("graph_leading")
+            case .graphTrailing: L10n.text("graph_trailing")
             }
         }
     }
@@ -27,6 +27,7 @@ final class AppSettings: ObservableObject {
         static let showsRemainingPercentage = "showsRemainingPercentage"
         static let showsMenuLabel = "showsMenuLabel"
         static let meterContentOrder = "meterContentOrder"
+        static let appLanguage = L10n.defaultsKey
     }
 
     @Published private(set) var launchAtLogin: Bool
@@ -34,6 +35,11 @@ final class AppSettings: ObservableObject {
     @Published private(set) var showsCodexMenu: Bool
     @Published private(set) var showsClaudeMenu: Bool
     @Published private(set) var menuVisibilityError: String?
+    @Published var appLanguage: AppLanguage {
+        didSet {
+            defaults.set(appLanguage.rawValue, forKey: Key.appLanguage)
+        }
+    }
     @Published var opensDetailsOnHover: Bool {
         didSet {
             defaults.set(opensDetailsOnHover, forKey: Key.opensDetailsOnHover)
@@ -76,6 +82,14 @@ final class AppSettings: ObservableObject {
         meterContentOrder = defaults.string(forKey: Key.meterContentOrder)
             .flatMap(MeterContentOrder.init(rawValue:)) ?? .graphLeading
         menuVisibilityError = nil
+        if let storedLanguage = defaults.string(forKey: Key.appLanguage)
+            .flatMap(AppLanguage.init(rawValue:)) {
+            appLanguage = storedLanguage
+        } else {
+            let detectedLanguage = AppLanguage.systemDefault()
+            appLanguage = detectedLanguage
+            defaults.set(detectedLanguage.rawValue, forKey: Key.appLanguage)
+        }
 
         if !showsCodexMenu, !showsClaudeMenu {
             showsCodexMenu = true
@@ -122,7 +136,7 @@ final class AppSettings: ObservableObject {
         case .claudeCode: showsCodexMenu
         }
         guard visible || otherIsVisible else {
-            menuVisibilityError = "設定を開けるように、少なくとも片方を表示してください。"
+            menuVisibilityError = L10n.text("menu_visibility_error")
             return
         }
 

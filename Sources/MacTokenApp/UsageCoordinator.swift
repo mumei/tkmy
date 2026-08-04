@@ -100,7 +100,7 @@ actor UsageCoordinator {
                 ? .sourceMissing(searchedLocations: searchedLocations(for: source))
                 : .staleSource(
                     snapshot: snapshot,
-                    warning: "現在の利用記録が見つからないため、端末に保存済みの履歴を表示しています。"
+                    warning: L10n.text("stale_history")
                 )
         }
         return unreadable > 0

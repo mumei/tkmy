@@ -22,16 +22,16 @@ enum MenuMeterStyle: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .coloredBar: "カラーバー"
-        case .monochromeBar: "モノクロバー"
-        case .monochromeSegments: "分割"
-        case .coloredSegments: "カラー分割"
-        case .dots: "ドット"
-        case .ring: "リング"
-        case .gauge: "ゲージ"
-        case .battery: "バッテリー"
-        case .verticalBars: "縦バー"
-        case .percentageOnly: "数字のみ"
+        case .coloredBar: L10n.text("style_colored_bar")
+        case .monochromeBar: L10n.text("style_monochrome_bar")
+        case .monochromeSegments: L10n.text("style_segments")
+        case .coloredSegments: L10n.text("style_colored_segments")
+        case .dots: L10n.text("style_dots")
+        case .ring: L10n.text("style_ring")
+        case .gauge: L10n.text("style_gauge")
+        case .battery: L10n.text("style_battery")
+        case .verticalBars: L10n.text("style_vertical_bars")
+        case .percentageOnly: L10n.text("style_percentage_only")
         }
     }
 }

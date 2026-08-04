@@ -34,6 +34,7 @@ public struct SourceUsagePopoverView: View {
     @ObservedObject private var viewModel: SourceUsageViewModel
     private let expectedSource: UsageSource
     @State private var hoveredDay: Date?
+    @AppStorage(L10n.defaultsKey) private var languageRawValue = AppLanguage.systemDefault().rawValue
 
     public init(viewModel: SourceUsageViewModel) {
         self.viewModel = viewModel
@@ -57,7 +58,12 @@ public struct SourceUsagePopoverView: View {
         .padding(Layout.outerPadding)
         .frame(width: Layout.popoverWidth, height: Layout.popoverHeight, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.locale, selectedLanguageLocale)
         .task { await viewModel.refresh() }
+    }
+
+    private var selectedLanguageLocale: Locale {
+        Locale(identifier: AppLanguage(rawValue: languageRawValue)?.rawValue ?? AppLanguage.japanese.rawValue)
     }
 
     private var header: some View {
@@ -71,12 +77,15 @@ public struct SourceUsagePopoverView: View {
                 if case .loading = viewModel.phase {
                     ProgressView()
                         .controlSize(.small)
-                        .accessibilityLabel("更新中")
+                        .accessibilityLabel(L10n.text("updating"))
                 } else if let refreshedAt = viewModel.lastSuccessfulUpdate {
                     Text(refreshedAt, format: .dateTime.hour().minute())
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .accessibilityLabel("最終更新 \(refreshedAt.formatted(date: .omitted, time: .shortened))")
+                        .accessibilityLabel(L10n.text(
+                            "last_updated",
+                            refreshedAt.formatted(.dateTime.hour().minute().locale(selectedLanguageLocale))
+                        ))
                 }
             }
             .frame(width: Layout.headerAccessoryWidth, height: Layout.headerHeight, alignment: .trailing)
@@ -89,8 +98,8 @@ public struct SourceUsagePopoverView: View {
         if viewModel.source != expectedSource {
             StateMessageView(
                 symbol: "exclamationmark.triangle",
-                title: "データソースが一致しません",
-                message: "\(expectedSource.displayName)用のViewModelを指定してください。",
+                title: L10n.text("source_mismatch"),
+                message: L10n.text("use_viewmodel_for_source", expectedSource.displayName),
                 retry: nil
             )
         } else {
@@ -104,8 +113,8 @@ public struct SourceUsagePopoverView: View {
             case let .partialFailure(unreadableFileCount):
                 loadedContent(
                     notice: unreadableFileCount == 1
-                        ? "1件のファイルを読み取れませんでした。表示値は一部です。"
-                        : "\(unreadableFileCount.formatted())件のファイルを読み取れませんでした。表示値は一部です。"
+                        ? L10n.text("unreadable_file_one")
+                        : L10n.text("unreadable_files", Int64(unreadableFileCount))
                 )
             case let .staleSource(warning):
                 loadedContent(notice: warning)
@@ -114,8 +123,8 @@ public struct SourceUsagePopoverView: View {
             case let .unavailable(reason):
                 StateMessageView(
                     symbol: "exclamationmark.circle",
-                    title: "利用状況を表示できません",
-                    message: reason ?? "保存データまたは利用記録を読み込めませんでした。",
+                    title: L10n.text("cannot_display"),
+                    message: reason ?? L10n.text("cannot_read_data"),
                     retry: { Task { await viewModel.refresh() } }
                 )
             }
@@ -125,8 +134,8 @@ public struct SourceUsagePopoverView: View {
     private var loadingView: some View {
         StateMessageView(
             symbol: "arrow.triangle.2.circlepath",
-            title: "利用記録を読み込み中",
-            message: "見つかった記録を端末内で集計しています。",
+            title: L10n.text("loading_records"),
+            message: L10n.text("aggregating_locally"),
             retry: nil,
             showsProgress: true
         )
@@ -136,14 +145,14 @@ public struct SourceUsagePopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             StateMessageView(
                 symbol: "folder.badge.questionmark",
-                title: "\(expectedSource.displayName)の利用記録が見つかりません",
-                message: "一度利用したあとに再読み込みしてください。",
+                title: L10n.text("records_not_found", expectedSource.displayName),
+                message: L10n.text("use_then_reload"),
                 retry: { Task { await viewModel.refresh() } }
             )
 
             if !locations.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("確認した場所")
+                    Text(L10n.text("searched_locations"))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                     ForEach(locations, id: \.self) { location in
@@ -165,10 +174,10 @@ public struct SourceUsagePopoverView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("日別トークン消費")
+                    Text(L10n.text("daily_token_usage"))
                         .font(.headline)
                     Spacer()
-                    Text("直近12か月")
+                    Text(L10n.text("last_12_months"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -193,11 +202,11 @@ public struct SourceUsagePopoverView: View {
         let usage = viewModel.todayUsage
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("今日")
+                Text(L10n.text("today"))
                     .font(.headline)
 
                 if let usage, usage.unknownCostEventCount > 0 {
-                    Label("\(usage.unknownCostEventCount.formatted())件 未算出", systemImage: "exclamationmark.circle")
+                    Label(L10n.text("uncalculated_count", Int64(usage.unknownCostEventCount)), systemImage: "exclamationmark.circle")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
@@ -205,9 +214,11 @@ public struct SourceUsagePopoverView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text("直近30日の推定合計（USD）")
+                    Text(L10n.text("recent_30_day_cost"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
                     Text(CostText.value(for: viewModel.recent30DayCostSummary))
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .monospacedDigit()
@@ -216,19 +227,19 @@ public struct SourceUsagePopoverView: View {
             }
 
             HStack(alignment: .top, spacing: 0) {
-                MetricView(title: "合計", value: usage.map { TokenText.compact($0.tokens.total) } ?? "0", isPrimary: true)
+                MetricView(title: L10n.text("total"), value: usage.map { TokenText.compact($0.tokens.total) } ?? "0", isPrimary: true)
                 summaryDivider
-                MetricView(title: "入力", value: usage.map { TokenText.compact($0.tokens.input) } ?? "0")
+                MetricView(title: L10n.text("input"), value: usage.map { TokenText.compact($0.tokens.input) } ?? "0")
                 summaryDivider
-                MetricView(title: "出力", value: usage.map { TokenText.compact($0.tokens.output) } ?? "0")
+                MetricView(title: L10n.text("output"), value: usage.map { TokenText.compact($0.tokens.output) } ?? "0")
                 summaryDivider
-                MetricView(title: "推定金額（USD）", value: CostText.value(for: usage))
+                MetricView(title: L10n.text("estimated_cost"), value: CostText.value(for: usage))
             }
         }
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("今日の利用状況")
+        .accessibilityLabel(L10n.text("today_usage"))
     }
 
     private var summaryDivider: some View {
@@ -253,7 +264,7 @@ public struct SourceUsagePopoverView: View {
                     Spacer()
 
                     if let usage, usage.unknownCostEventCount > 0 {
-                        Text("\(usage.unknownCostEventCount.formatted())件 未算出")
+                        Text(L10n.text("uncalculated_count", Int64(usage.unknownCostEventCount)))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -261,23 +272,23 @@ public struct SourceUsagePopoverView: View {
                 .frame(height: Layout.selectedDayHeaderHeight, alignment: .top)
 
                 LazyVGrid(columns: Layout.detailColumns, alignment: .leading, spacing: 8) {
-                    DetailMetricView(title: "合計", value: usage.map { TokenText.exact($0.tokens.total) } ?? "0")
-                    DetailMetricView(title: "入力", value: usage.map { TokenText.exact($0.tokens.input) } ?? "0")
-                    DetailMetricView(title: "出力", value: usage.map { TokenText.exact($0.tokens.output) } ?? "0")
-                    DetailMetricView(title: "キャッシュ作成", value: usage.map { TokenText.exact($0.tokens.cacheCreate5m + $0.tokens.cacheCreate1h) } ?? "0")
-                    DetailMetricView(title: "キャッシュ読取", value: usage.map { TokenText.exact($0.tokens.cacheRead) } ?? "0")
-                    DetailMetricView(title: "推定金額（USD）", value: CostText.value(for: usage))
+                    DetailMetricView(title: L10n.text("total"), value: usage.map { TokenText.exact($0.tokens.total) } ?? "0")
+                    DetailMetricView(title: L10n.text("input"), value: usage.map { TokenText.exact($0.tokens.input) } ?? "0")
+                    DetailMetricView(title: L10n.text("output"), value: usage.map { TokenText.exact($0.tokens.output) } ?? "0")
+                    DetailMetricView(title: L10n.text("cache_create"), value: usage.map { TokenText.exact($0.tokens.cacheCreate5m + $0.tokens.cacheCreate1h) } ?? "0")
+                    DetailMetricView(title: L10n.text("cache_read"), value: usage.map { TokenText.exact($0.tokens.cacheRead) } ?? "0")
+                    DetailMetricView(title: L10n.text("estimated_cost"), value: CostText.value(for: usage))
                 }
 
                 Divider()
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("モデル別トークン消費")
+                    Text(L10n.text("model_token_usage"))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
 
                     if usageByModel.isEmpty {
-                        Text("モデル情報なし")
+                        Text(L10n.text("no_model_info"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(
@@ -299,9 +310,9 @@ public struct SourceUsagePopoverView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("選択日の詳細")
+            .accessibilityLabel(L10n.text("selected_day_details"))
         } else {
-            Text("ヒートマップの日付を選択すると詳細を表示します。")
+            Text(L10n.text("select_heatmap_day"))
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -319,13 +330,17 @@ public struct SourceUsagePopoverView: View {
             }
 
             HStack(spacing: 8) {
-                Text("推定金額はログ記録済みUSDを優先し、未記録分はAPI単価から算出した参考値です。")
+                Text(L10n.text("cost_note"))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.65)
 
                 Spacer(minLength: 8)
 
                 if let pricingUpdatedAt = viewModel.pricingUpdatedAt {
-                    Text("価格表 \(pricingUpdatedAt.formatted(date: .numeric, time: .omitted))")
+                    Text(L10n.text(
+                        "price_table",
+                        pricingUpdatedAt.formatted(.dateTime.year().month().day().locale(selectedLanguageLocale))
+                    ))
                         .monospacedDigit()
                         .lineLimit(1)
                 }
@@ -410,18 +425,18 @@ public struct TokenHeatmap: View {
 
             HStack(spacing: 4) {
                 Spacer()
-                Text("少")
+                Text(L10n.text("less"))
                 ForEach(1...5, id: \.self) { step in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(HeatmapColor.fill(intensity: Double(step) / 5))
                         .frame(width: 9, height: 9)
                 }
-                Text("多")
+                Text(L10n.text("more"))
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(source.displayName)のトークン消費。ティールから赤に近づくほど利用量が多い")
+            .accessibilityLabel(L10n.text("heatmap_a11y", source.displayName))
         }
         .frame(maxWidth: .infinity)
     }
@@ -487,12 +502,14 @@ private struct HeatmapDayButton: View {
 
     private var helpText: String {
         guard let date = item.date else { return "" }
-        return "\(date.formatted(date: .abbreviated, time: .omitted)): \(TokenText.exact(usage?.tokens.total ?? 0)) tokens"
+        let dateText = date.formatted(.dateTime.year().month().day().locale(L10n.locale))
+        return "\(dateText): \(L10n.text("tokens_format", TokenText.exact(usage?.tokens.total ?? 0)))"
     }
 
     private var accessibilityText: String {
-        guard let date = item.date else { return "期間外" }
-        return "\(date.formatted(date: .complete, time: .omitted))、\(TokenText.exact(usage?.tokens.total ?? 0))トークン"
+        guard let date = item.date else { return L10n.text("outside_period") }
+        let dateText = date.formatted(.dateTime.year().month().day().weekday(.wide).locale(L10n.locale))
+        return "\(dateText), \(L10n.text("tokens_format", TokenText.exact(usage?.tokens.total ?? 0)))"
     }
 }
 
@@ -501,7 +518,7 @@ private struct ModelUsageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(usage.model ?? "モデル記録なし")
+            Text(usage.model ?? L10n.text("model_not_recorded"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -514,7 +531,7 @@ private struct ModelUsageView: View {
         .frame(maxWidth: .infinity, minHeight: Layout.modelRowHeight, alignment: .topLeading)
         .help(
             usage.model == nil
-                ? "利用記録にモデル名が含まれていないトークンです。"
+                ? L10n.text("model_missing_help")
                 : usage.model ?? ""
         )
         .accessibilityElement(children: .combine)
@@ -538,6 +555,7 @@ private struct MetricView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.65)
             Text(value)
                 .font(.system(size: isPrimary ? 26 : 20, weight: isPrimary ? .bold : .semibold, design: .rounded))
                 .monospacedDigit()
@@ -558,6 +576,7 @@ private struct DetailMetricView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.65)
             Text(value)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .monospacedDigit()
@@ -593,7 +612,7 @@ private struct StateMessageView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 390)
             if let retry {
-                Button("再読み込み", action: retry)
+                Button(L10n.text("reload"), action: retry)
                     .buttonStyle(.bordered)
             }
         }
@@ -673,11 +692,11 @@ enum HeatmapColor {
 
 private enum TokenText {
     static func compact(_ value: Int64) -> String {
-        value.formatted(.number.notation(.compactName))
+        value.formatted(.number.notation(.compactName).locale(L10n.locale))
     }
 
     static func exact(_ value: Int64) -> String {
-        value.formatted(.number.grouping(.automatic))
+        value.formatted(.number.grouping(.automatic).locale(L10n.locale))
     }
 }
 
@@ -686,7 +705,7 @@ private enum CostText {
         guard let usage else { return "$0.00" }
 
         if usage.unknownCostEventCount > 0, usage.knownCostMicrosUSD == 0 {
-            return "算出不可"
+            return L10n.text("cannot_calculate")
         }
 
         let dollars = Decimal(usage.knownCostMicrosUSD) / 1_000_000
@@ -700,7 +719,7 @@ private enum CostText {
 
     static func value(for summary: UsageCostSummary) -> String {
         if summary.unknownCostEventCount > 0, summary.knownCostMicrosUSD == 0 {
-            return "算出不可"
+            return L10n.text("cannot_calculate")
         }
 
         let dollars = summary.knownCostMicrosUSD / 1_000_000

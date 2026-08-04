@@ -1,10 +1,13 @@
 import AppKit
+import Combine
 import SwiftUI
 import UpdateSupport
+import UsageDomain
 
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let settings: AppSettings
+    private var cancellables: Set<AnyCancellable> = []
 
     init(settings: AppSettings, updateController: UpdateController) {
         self.settings = settings
@@ -12,12 +15,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             rootView: SettingsView(settings: settings, updateController: updateController)
         )
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "TKMY 設定"
+        window.title = L10n.text("settings_title")
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.isReleasedWhenClosed = false
         window.setContentSize(NSSize(width: 520, height: 470))
         super.init(window: window)
         window.delegate = self
+        settings.$appLanguage
+            .receive(on: RunLoop.main)
+            .sink { [weak window] _ in window?.title = L10n.text("settings_title") }
+            .store(in: &cancellables)
     }
 
     @available(*, unavailable)
@@ -27,6 +34,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func showSettings(on sourceScreen: NSScreen?) {
         settings.refreshLaunchAtLoginStatus()
+        window?.title = L10n.text("settings_title")
         positionWindow(on: sourceScreen ?? screenContainingPointer ?? NSScreen.main)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

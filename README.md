@@ -4,7 +4,9 @@
 
 **TKMY（トークン見えるやつ）** is an open-source macOS menu bar app that shows local Codex and Claude Code token usage as two independent meters. Each popover shows today's input/output totals, an estimated USD cost, and a 12-month daily heatmap.
 
-Right-click either meter and choose **設定…** to control launch at login, hover-to-open behavior, automatic update checks, and the visibility of the Codex and Claude Code menu items. At least one menu item always remains visible so the settings window stays reachable.
+Right-click either meter and choose **Settings…** to control the display language, launch at login, hover-to-open behavior, automatic update checks, and the visibility of the Codex and Claude Code menu items. At least one menu item always remains visible so the settings window stays reachable.
+
+On first launch, TKMY selects a supported language from the Mac’s preferred languages. The interface can then be switched immediately between English, Japanese, German, Simplified Chinese, French, Korean, Spanish, Italian, Vietnamese, Thai, and Traditional Chinese.
 
 The app reads local JSONL usage records. Prompt text, responses, source code, project paths, and API keys are not stored.
 

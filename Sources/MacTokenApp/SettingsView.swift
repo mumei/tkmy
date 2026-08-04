@@ -22,36 +22,47 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("一般") {
-                Toggle("ログイン時にTKMYを起動", isOn: Binding(
+            Section(L10n.text("general")) {
+                Picker(L10n.text("display_language"), selection: $settings.appLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.nativeName).tag(language)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text(L10n.text("language_hint"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle(L10n.text("launch_at_login"), isOn: Binding(
                     get: { settings.launchAtLogin },
                     set: { settings.setLaunchAtLogin($0) }
                 ))
-                Toggle("ポインタを置いたときに詳細を開く", isOn: $settings.opensDetailsOnHover)
+                Toggle(L10n.text("open_details_on_hover"), isOn: $settings.opensDetailsOnHover)
 
                 if let error = settings.launchAtLoginError {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
-                        .accessibilityLabel("ログイン時の起動設定エラー: \(error)")
+                        .accessibilityLabel(L10n.text("launch_error", error))
                 }
             }
 
-            Section("メニューバー") {
-                Toggle("Codexを表示", isOn: menuVisibilityBinding(for: .codex))
-                Toggle("Claude Codeを表示", isOn: menuVisibilityBinding(for: .claudeCode))
+            Section(L10n.text("menubar")) {
+                Toggle(L10n.text("show_codex"), isOn: menuVisibilityBinding(for: .codex))
+                Toggle(L10n.text("show_claude"), isOn: menuVisibilityBinding(for: .claudeCode))
 
-                Picker("メーターの表示", selection: $settings.menuMeterStyle) {
+                Picker(L10n.text("meter_style"), selection: $settings.menuMeterStyle) {
                     ForEach(MenuMeterStyle.allCases) { style in
                         Text(style.displayName).tag(style)
                     }
                 }
                 .pickerStyle(.menu)
 
-                Toggle("ラベルを表示", isOn: $settings.showsMenuLabel)
-                Toggle("残量パーセントを表示", isOn: $settings.showsRemainingPercentage)
+                Toggle(L10n.text("show_label"), isOn: $settings.showsMenuLabel)
+                Toggle(L10n.text("show_remaining_percentage"), isOn: $settings.showsRemainingPercentage)
 
-                Picker("ラベルとグラフの並び", selection: $settings.meterContentOrder) {
+                Picker(L10n.text("content_order"), selection: $settings.meterContentOrder) {
                     ForEach(AppSettings.MeterContentOrder.allCases) { order in
                         Text(order.displayName).tag(order)
                     }
@@ -59,7 +70,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .disabled(settings.menuMeterStyle == .percentageOnly)
 
-                LabeledContent("プレビュー") {
+                LabeledContent(L10n.text("preview")) {
                     HStack(spacing: 6) {
                         if settings.meterContentOrder == .graphLeading {
                             previewGraph
@@ -77,16 +88,16 @@ struct SettingsView: View {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
-                        .accessibilityLabel("メニューバー表示設定エラー: \(error)")
+                        .accessibilityLabel(L10n.text("menu_visibility_a11y_error", error))
                 } else {
-                    Text("設定を開くため、少なくとも片方のメニューを表示します。")
+                    Text(L10n.text("at_least_one_menu"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            Section("アップデート") {
-                Toggle("アップデートを自動的に確認", isOn: $automaticallyChecksForUpdates)
+            Section(L10n.text("updates")) {
+                Toggle(L10n.text("automatic_updates"), isOn: $automaticallyChecksForUpdates)
                     .disabled(!updateController.isConfigured)
                     .onChange(of: automaticallyChecksForUpdates) { _, newValue in
                         updateController.automaticallyChecksForUpdates = newValue
@@ -94,30 +105,31 @@ struct SettingsView: View {
 
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(updateController.isConfigured ? "Sparkleから更新を取得します" : "開発ビルドでは更新先が未設定です")
-                        Text(updateController.isConfigured ? "新しいバージョンがある場合に通知します。" : "正式な配布設定を行うと利用できます。")
+                        Text(updateController.isConfigured ? L10n.text("sparkle_updates") : L10n.text("updates_not_configured"))
+                        Text(updateController.isConfigured ? L10n.text("update_notification") : L10n.text("updates_available_after_config"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("今すぐ確認") {
+                    Button(L10n.text("check_now")) {
                         updateController.checkForUpdates()
                     }
                     .disabled(!updateController.isConfigured)
                 }
             }
 
-            Section("情報") {
-                LabeledContent("バージョン", value: versionText)
-                LabeledContent("ライセンス", value: "MIT License")
-                LabeledContent("制作者") {
+            Section(L10n.text("information")) {
+                LabeledContent(L10n.text("version"), value: versionText)
+                LabeledContent(L10n.text("license"), value: "MIT License")
+                LabeledContent(L10n.text("creator")) {
                     Link("@yuto_uehara_san", destination: Self.creatorURL)
-                        .accessibilityHint("Xの制作者プロフィールを開きます")
+                        .accessibilityHint(L10n.text("creator_link_hint"))
                 }
             }
         }
         .formStyle(.grouped)
         .frame(width: 520, height: 520)
+        .environment(\.locale, Locale(identifier: settings.appLanguage.rawValue))
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
             automaticallyChecksForUpdates = updateController.automaticallyChecksForUpdates
@@ -126,7 +138,7 @@ struct SettingsView: View {
 
     private var previewLabel: String {
         let source = settings.showsMenuLabel ? "Codex" : ""
-        let percentage = settings.showsRemainingPercentage ? "残り58%" : ""
+        let percentage = settings.showsRemainingPercentage ? L10n.text("remaining_format", "58%") : ""
         let label = [source, percentage].filter { !$0.isEmpty }.joined(separator: " ")
         if label.isEmpty, settings.menuMeterStyle == .percentageOnly {
             return "Codex"
