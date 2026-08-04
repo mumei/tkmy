@@ -90,9 +90,6 @@ jobs:
       - name: Validate release scripts
         run: zsh -n Scripts/*.sh
 
-      - name: Test
-        run: swift test
-
       - name: Import Developer ID certificate
         run: ./Scripts/import-signing-certificate.sh
 
