@@ -105,7 +105,7 @@ struct SettingsView: View {
 
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(updateController.isConfigured ? L10n.text("sparkle_updates") : L10n.text("updates_not_configured"))
+                        Text(updateController.isConfigured ? L10n.text("update_check") : L10n.text("updates_not_configured"))
                         Text(updateController.isConfigured ? L10n.text("update_notification") : L10n.text("updates_available_after_config"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
