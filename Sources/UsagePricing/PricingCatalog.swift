@@ -23,10 +23,26 @@ public struct PricingCatalog: Codable, Equatable, Sendable {
     }
 
     public static func bundled() throws -> PricingCatalog {
-        guard let url = Bundle.module.url(forResource: "model-pricing", withExtension: "json") else {
+        guard let url = packagedCatalogURL
+            ?? Bundle.module.url(forResource: "model-pricing", withExtension: "json") else {
             throw PricingCatalogError.bundledCatalogMissing
         }
         return try decode(from: Data(contentsOf: url))
+    }
+
+    /// SwiftPM looks for resource bundles beside the executable, while a
+    /// packaged macOS app stores them in Contents/Resources. Check the app's
+    /// standard resource directory before falling back to SwiftPM's accessor.
+    private static var packagedCatalogURL: URL? {
+        packagedCatalogURL(in: Bundle.main.resourceURL)
+    }
+
+    static func packagedCatalogURL(in resources: URL?) -> URL? {
+        guard let resources else { return nil }
+        let url = resources
+            .appendingPathComponent("TKMY_UsagePricing.bundle", isDirectory: true)
+            .appendingPathComponent("model-pricing.json", isDirectory: false)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     public func validated() throws -> PricingCatalog {

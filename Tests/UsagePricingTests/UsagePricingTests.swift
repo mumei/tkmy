@@ -5,6 +5,23 @@ import UsageDomain
 final class UsagePricingTests: XCTestCase {
     private let day = Date(timeIntervalSince1970: 1_750_000_000)
 
+    func testPackagedCatalogResolvesFromMacOSResourcesDirectory() throws {
+        let resources = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let catalog = resources
+            .appendingPathComponent("TKMY_UsagePricing.bundle", isDirectory: true)
+            .appendingPathComponent("model-pricing.json", isDirectory: false)
+        defer { try? FileManager.default.removeItem(at: resources) }
+
+        try FileManager.default.createDirectory(
+            at: catalog.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{}".utf8).write(to: catalog)
+
+        XCTAssertEqual(PricingCatalog.packagedCatalogURL(in: resources), catalog)
+    }
+
     func testSourceCostTakesPriorityOverUnknownModelAndCatalog() throws {
         let calculator = try makeCalculator()
         let event = makeEvent(model: "not-in-catalog", sourceCost: 42, tokens: .init(input: 9_000_000))
