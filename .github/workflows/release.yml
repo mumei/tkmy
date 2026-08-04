@@ -157,11 +157,25 @@ jobs:
           )
 
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$tag" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "TKMY ${RELEASE_VERSION}" \
+            edit_args=(
+              "$tag"
+              --repo "$GITHUB_REPOSITORY"
+              --title "TKMY ${RELEASE_VERSION}"
               --notes-file "$change_log_path"
+              --draft=false
+            )
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              edit_args+=(--prerelease)
+            else
+              edit_args+=(--prerelease=false --latest)
+            fi
+            gh release edit "${edit_args[@]}"
             gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+            is_draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" != "false" ]]; then
+              echo "GitHub Release remained a draft after publishing." >&2
+              exit 1
+            fi
             exit 0
           fi
 
@@ -175,5 +189,13 @@ jobs:
           )
           if [[ "$IS_PRERELEASE" == "true" ]]; then
             release_args+=(--prerelease)
+          else
+            release_args+=(--latest)
           fi
           gh release create "${release_args[@]}"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+          is_draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          if [[ "$is_draft" != "false" ]]; then
+            echo "GitHub Release remained a draft after publishing." >&2
+            exit 1
+          fi
