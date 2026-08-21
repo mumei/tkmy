@@ -99,3 +99,36 @@ import UsageDomain
     ]
     #expect(adapters.map(\.source) == [.codex, .claudeCode])
 }
+
+@Test func streamParsersPreserveEventsAcrossSmallChunks() throws {
+    let cases: [(any UsageSourceAdapter, Data, URL)] = [
+        (
+            CodexAdapter(environment: [:], homeDirectory: URL(fileURLWithPath: "/tmp/home")),
+            FixtureData.codexSession,
+            URL(fileURLWithPath: "/tmp/.codex/sessions/session.jsonl")
+        ),
+        (
+            ClaudeCodeAdapter(environment: [:], homeDirectory: URL(fileURLWithPath: "/tmp/home")),
+            FixtureData.claudeSession,
+            URL(fileURLWithPath: "/tmp/.claude/projects/session.jsonl")
+        ),
+    ]
+
+    for (adapter, data, url) in cases {
+        let expected = Set(adapter.parse(data, at: url).events.map(\.eventKey))
+        let parser = adapter.makeStreamParser(at: url)
+        var actual = Set<String>()
+        var offset = 0
+        while offset < data.count {
+            let end = min(data.count, offset + 17)
+            let result = parser.consume(Data(data[offset..<end]), isFinal: false)
+            actual.formUnion(result.events.map(\.eventKey))
+            offset = end
+        }
+        let final = parser.consume(Data(), isFinal: true)
+        actual.formUnion(final.events.map(\.eventKey))
+
+        #expect(actual == expected)
+        #expect(final.consumedByteCount + final.remainder.count == data.count)
+    }
+}

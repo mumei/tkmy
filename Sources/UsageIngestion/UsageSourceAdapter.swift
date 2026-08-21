@@ -24,6 +24,13 @@ public protocol UsageSourceAdapter: Sendable {
     var source: UsageSource { get }
     func discoverLogFiles() throws -> [URL]
     func parse(_ data: Data, at sourceURL: URL) -> UsageParseResult
+    func makeStreamParser(at sourceURL: URL) -> any UsageStreamParser
+}
+
+/// Stateful parser used when a transcript is too large to load as one `Data` value.
+/// Each result only owns the events produced by the supplied chunk.
+public protocol UsageStreamParser: AnyObject {
+    func consume(_ data: Data, isFinal: Bool) -> UsageParseResult
 }
 
 public enum UsagePathIdentity {
@@ -69,6 +76,67 @@ public enum IncrementalJSONLParser {
             completeLines: completeLines,
             consumedByteCount: lineStart,
             remainder: Data(buffer[lineStart...]),
+            malformedLineCount: malformedLineCount
+        )
+    }
+}
+
+/// Keeps only an unfinished JSONL line between chunks and decodes each complete
+/// object once. This bounds ingestion memory independently of transcript size.
+struct JSONLUsageStreamBuffer {
+    private var pending = Data()
+    private var consumedByteCount = 0
+
+    mutating func consume(
+        _ data: Data,
+        isFinal: Bool,
+        transform: ([String: Any]) -> NormalizedUsageEvent?
+    ) -> UsageParseResult {
+        pending.append(data)
+        var events: [NormalizedUsageEvent] = []
+        var malformedLineCount = 0
+        var lineStart = pending.startIndex
+
+        for newline in pending.indices where pending[newline] == 0x0A {
+            var line = pending[lineStart..<newline]
+            if line.last == 0x0D { line = line.dropLast() }
+            if !line.isEmpty {
+                autoreleasepool {
+                    let bytes = Data(line)
+                    if let object = IngestionSupport.jsonObject(bytes) {
+                        if let event = transform(object) { events.append(event) }
+                    } else {
+                        malformedLineCount += 1
+                    }
+                }
+            }
+            lineStart = pending.index(after: newline)
+        }
+
+        let consumedNow = pending.distance(from: pending.startIndex, to: lineStart)
+        consumedByteCount += consumedNow
+        pending = Data(pending[lineStart...])
+
+        // A closed transcript may contain a valid final JSON object without a newline.
+        // Keep an invalid tail so a writer can finish it during the next refresh.
+        if isFinal, !pending.isEmpty {
+            var finalized = false
+            autoreleasepool {
+                if let object = IngestionSupport.jsonObject(pending) {
+                    if let event = transform(object) { events.append(event) }
+                    finalized = true
+                }
+            }
+            if finalized {
+                consumedByteCount += pending.count
+                pending.removeAll(keepingCapacity: false)
+            }
+        }
+
+        return UsageParseResult(
+            events: events,
+            consumedByteCount: consumedByteCount,
+            remainder: pending,
             malformedLineCount: malformedLineCount
         )
     }

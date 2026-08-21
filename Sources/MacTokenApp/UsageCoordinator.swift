@@ -6,7 +6,9 @@ import UsageStore
 import UsageUI
 
 actor UsageCoordinator {
-    private static let parserVersion = 1
+    private static let parserVersion = 2
+    private static let readChunkSize = 1_048_576
+    private static let codexStateLookbackBytes: UInt64 = 4 * 1_048_576
     private let store: SQLiteUsageStore
     private let calculator: UsagePriceCalculator
     private let codex = CodexAdapter()
@@ -43,7 +45,8 @@ actor UsageCoordinator {
                 let modifiedMilliseconds = Int64((modifiedDate.timeIntervalSince1970 * 1_000).rounded())
                 let pathHash = UsagePathIdentity.sha256(for: file)
                 let signature = try Self.contentSignature(for: file, size: size)
-                if let cursor = try await store.cursor(for: source, pathHash: pathHash),
+                let cursor = try await store.cursor(for: source, pathHash: pathHash)
+                if let cursor,
                    cursor.inode == inode,
                    cursor.size == size,
                    cursor.modifiedAtMilliseconds == modifiedMilliseconds,
@@ -51,30 +54,62 @@ actor UsageCoordinator {
                    cursor.parserVersion == Self.parserVersion {
                     continue
                 }
-                let data = try Data(contentsOf: file, options: [.mappedIfSafe])
-                var result = adapter.parse(data, at: file)
-                if !result.remainder.isEmpty,
-                   (try? JSONSerialization.jsonObject(with: result.remainder)) != nil {
-                    var finalized = data
-                    finalized.append(0x0A)
-                    result = adapter.parse(finalized, at: file)
+
+                let isAppend = try cursor.map {
+                    try Self.isAppendOnlyChange(
+                        cursor: $0,
+                        inode: inode,
+                        currentSize: size,
+                        file: file
+                    )
+                } ?? false
+                let newBytesOffset = isAppend ? min(cursor?.byteOffset ?? 0, size) : 0
+                let parserStart: UInt64
+                if isAppend, source == .codex {
+                    parserStart = newBytesOffset > Self.codexStateLookbackBytes
+                        ? newBytesOffset - Self.codexStateLookbackBytes
+                        : 0
+                } else {
+                    parserStart = newBytesOffset
                 }
-                unreadable += result.malformedLineCount
-                try await store.replaceEvents(source: source, originPathHash: pathHash, with: result.events)
-                if result.malformedLineCount == 0, result.remainder.isEmpty {
-                    try await store.saveCursor(
-                        FileCursor(
+
+                if !isAppend {
+                    try await store.deleteEvents(source: source, originPathHash: pathHash)
+                }
+                let parser = adapter.makeStreamParser(at: file)
+                let handle = try FileHandle(forReadingFrom: file)
+                defer { try? handle.close() }
+
+                if parserStart < newBytesOffset {
+                    try handle.seek(toOffset: parserStart)
+                    let warmup = try handle.read(upToCount: Int(newBytesOffset - parserStart)) ?? Data()
+                    _ = parser.consume(warmup, isFinal: false)
+                }
+                try handle.seek(toOffset: newBytesOffset)
+                while let chunk = try handle.read(upToCount: Self.readChunkSize), !chunk.isEmpty {
+                    let result = parser.consume(chunk, isFinal: false)
+                    unreadable += result.malformedLineCount
+                    try await store.upsert(result.events)
+                }
+                let finalResult = parser.consume(Data(), isFinal: true)
+                unreadable += finalResult.malformedLineCount
+                try await store.upsert(finalResult.events)
+                let consumedOffset = min(
+                    size,
+                    parserStart + UInt64(finalResult.consumedByteCount)
+                )
+                try await store.saveCursor(
+                    FileCursor(
                         inode: inode,
                         size: size,
                         modifiedAtMilliseconds: modifiedMilliseconds,
-                        byteOffset: UInt64(result.consumedByteCount),
+                        byteOffset: consumedOffset,
                         contentSignature: signature,
                         parserVersion: Self.parserVersion
                     ),
-                        source: source,
-                        pathHash: pathHash
-                    )
-                }
+                    source: source,
+                    pathHash: pathHash
+                )
             } catch {
                 unreadable += 1
             }
@@ -83,9 +118,16 @@ actor UsageCoordinator {
         let calendar = Calendar.current
         let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
         let from = calendar.date(byAdding: .day, value: -364, to: through) ?? .distantPast
-        let events = try await store.events(source: source, from: from, through: through)
-        let daily = try calculator.dailyUsage(events: events, calendar: calendar)
-        let dailyByModel = try calculator.dailyModelUsage(events: events, calendar: calendar)
+        let report = try await store.reduceEvents(
+            source: source,
+            from: from,
+            through: through,
+            initial: UsageReportAccumulator(calendar: calendar)
+        ) { report, event in
+            try report.add(event, calculator: calculator)
+        }
+        let daily = report.dailyUsage
+        let dailyByModel = report.dailyModelUsage
         let usageLimit = source == .codex ? codex.latestUsageLimit(in: files) : nil
         let snapshot = SourceUsageSnapshot(
             source: source,
@@ -144,7 +186,7 @@ actor UsageCoordinator {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let sampleSize = 4_096
-        var sample = try handle.read(upToCount: sampleSize) ?? Data()
+        var sample = try handle.read(upToCount: min(sampleSize, Int(size))) ?? Data()
         if size > UInt64(sampleSize) {
             try handle.seek(toOffset: size - UInt64(sampleSize))
             sample.append(try handle.read(upToCount: sampleSize) ?? Data())
@@ -152,5 +194,19 @@ actor UsageCoordinator {
         var encodedSize = size.bigEndian
         sample.append(Data(bytes: &encodedSize, count: MemoryLayout<UInt64>.size))
         return UsagePathIdentity.sha256(data: sample)
+    }
+
+    private static func isAppendOnlyChange(
+        cursor: FileCursor,
+        inode: UInt64,
+        currentSize: UInt64,
+        file: URL
+    ) throws -> Bool {
+        guard cursor.parserVersion == parserVersion,
+              cursor.inode == inode,
+              currentSize >= cursor.size,
+              cursor.byteOffset <= cursor.size
+        else { return false }
+        return try contentSignature(for: file, size: cursor.size) == cursor.contentSignature
     }
 }

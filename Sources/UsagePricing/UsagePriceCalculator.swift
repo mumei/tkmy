@@ -146,7 +146,7 @@ public struct UsagePriceCalculator: Sendable {
         return roundedNumerator / Self.microsPerMillionTokens
     }
 
-    private func add(_ lhs: TokenBreakdown, _ rhs: TokenBreakdown) throws -> TokenBreakdown {
+    fileprivate func add(_ lhs: TokenBreakdown, _ rhs: TokenBreakdown) throws -> TokenBreakdown {
         func checked(_ lhs: Int64, _ rhs: Int64) throws -> Int64 {
             let (sum, overflow) = lhs.addingReportingOverflow(rhs)
             guard !overflow else { throw UsagePricingError.tokenCountOverflow }
@@ -170,6 +170,83 @@ public struct UsagePriceCalculator: Sendable {
               tokens.cacheRead >= 0,
               tokens.reasoningOutput >= 0 else {
             throw UsagePricingError.negativeTokenCount(eventKey)
+        }
+    }
+}
+
+/// Incremental equivalent of `dailyUsage` + `dailyModelUsage`. It retains one
+/// accumulator per day/model instead of retaining every raw event.
+public struct UsageReportAccumulator: Sendable {
+    private struct DayKey: Hashable, Sendable {
+        let day: Date
+        let source: UsageSource
+    }
+
+    private struct ModelKey: Hashable, Sendable {
+        let day: Date
+        let source: UsageSource
+        let model: String?
+    }
+
+    private struct DayValue: Sendable {
+        var tokens = TokenBreakdown.zero
+        var knownCostMicrosUSD: Int64 = 0
+        var unknownCostEventCount = 0
+    }
+
+    private let calendar: Calendar
+    private var days: [DayKey: DayValue] = [:]
+    private var models: [ModelKey: TokenBreakdown] = [:]
+
+    public init(calendar: Calendar) {
+        self.calendar = calendar
+    }
+
+    public mutating func add(_ event: NormalizedUsageEvent, calculator: UsagePriceCalculator) throws {
+        let day = calendar.startOfDay(for: event.occurredAt)
+        let dayKey = DayKey(day: day, source: event.source)
+        var dayValue = days[dayKey, default: DayValue()]
+        dayValue.tokens = try calculator.add(dayValue.tokens, event.tokens)
+        let price = try calculator.price(event)
+        if let cost = price.costMicrosUSD {
+            let (sum, overflow) = dayValue.knownCostMicrosUSD.addingReportingOverflow(cost)
+            guard !overflow else { throw UsagePricingError.costOverflow }
+            dayValue.knownCostMicrosUSD = sum
+        } else {
+            dayValue.unknownCostEventCount += 1
+        }
+        days[dayKey] = dayValue
+
+        let requestedModel = event.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nonemptyModel = requestedModel.flatMap { $0.isEmpty ? nil : $0 }
+        let canonicalModel = nonemptyModel.flatMap { calculator.catalog.pricing(for: $0)?.canonicalName }
+        let modelKey = ModelKey(day: day, source: event.source, model: canonicalModel ?? nonemptyModel)
+        models[modelKey] = try calculator.add(models[modelKey, default: .zero], event.tokens)
+    }
+
+    public var dailyUsage: [DailyUsage] {
+        days.map { key, value in
+            DailyUsage(
+                day: key.day,
+                source: key.source,
+                tokens: value.tokens,
+                knownCostMicrosUSD: value.knownCostMicrosUSD,
+                unknownCostEventCount: value.unknownCostEventCount
+            )
+        }.sorted {
+            if $0.day != $1.day { return $0.day < $1.day }
+            return $0.source.rawValue < $1.source.rawValue
+        }
+    }
+
+    public var dailyModelUsage: [DailyModelUsage] {
+        models.map { key, tokens in
+            DailyModelUsage(day: key.day, source: key.source, model: key.model, tokens: tokens)
+        }.sorted {
+            if $0.day != $1.day { return $0.day < $1.day }
+            if $0.source != $1.source { return $0.source.rawValue < $1.source.rawValue }
+            if $0.tokens.total != $1.tokens.total { return $0.tokens.total > $1.tokens.total }
+            return ($0.model ?? "") < ($1.model ?? "")
         }
     }
 }

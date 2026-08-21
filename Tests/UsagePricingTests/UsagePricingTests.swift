@@ -114,6 +114,22 @@ final class UsagePricingTests: XCTestCase {
         XCTAssertEqual(usage.first { $0.model == nil }?.tokens.total, 3)
     }
 
+    func testIncrementalReportMatchesArrayAggregation() throws {
+        let calculator = try makeCalculator()
+        let events = [
+            makeEvent(key: "a", source: .codex, model: "model-a", tokens: .init(input: 10)),
+            makeEvent(key: "b", source: .codex, model: "unknown", tokens: .init(output: 5)),
+            makeEvent(key: "c", source: .claudeCode, model: nil, sourceCost: 9, tokens: .init(cacheRead: 3)),
+        ]
+        var report = UsageReportAccumulator(calendar: .current)
+        for event in events {
+            try report.add(event, calculator: calculator)
+        }
+
+        XCTAssertEqual(report.dailyUsage, try calculator.dailyUsage(events: events, calendar: .current))
+        XCTAssertEqual(report.dailyModelUsage, try calculator.dailyModelUsage(events: events, calendar: .current))
+    }
+
     func testCatalogJSONLoadingAndValidation() throws {
         let data = try JSONEncoder().encode(makeCatalog())
         let decoded = try PricingCatalog.decode(from: data).validated()

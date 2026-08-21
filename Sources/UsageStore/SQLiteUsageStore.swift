@@ -88,6 +88,14 @@ public actor SQLiteUsageStore: UsageEventStore {
         }
     }
 
+    public func deleteEvents(source: UsageSource, originPathHash: String) throws {
+        let statement = try prepare("DELETE FROM usage_events WHERE source = ? AND origin_path_hash = ?")
+        defer { sqlite3_finalize(statement) }
+        bind(source.rawValue, at: 1, to: statement)
+        bind(originPathHash, at: 2, to: statement)
+        try stepDone(statement)
+    }
+
     public func knownPathHashes(source: UsageSource) throws -> Set<String> {
         let statement = try prepare("SELECT DISTINCT origin_path_hash FROM usage_events WHERE source = ?")
         defer { sqlite3_finalize(statement) }
@@ -135,6 +143,38 @@ public actor SQLiteUsageStore: UsageEventStore {
                 originPathHash: text(statement, 11) ?? ""
             )
             result.append(event)
+        }
+        return result
+    }
+
+    /// Reduces matching rows one at a time so callers can build reports without
+    /// materializing a potentially multi-gigabyte history in memory.
+    public func reduceEvents<Result: Sendable>(
+        source: UsageSource,
+        from: Date,
+        through: Date,
+        initial: Result,
+        _ update: @Sendable (inout Result, NormalizedUsageEvent) throws -> Void
+    ) throws -> Result {
+        let sql = """
+        SELECT event_key, session_id, occurred_at_ms,
+               input_tokens, cache_create_5m_tokens, cache_create_1h_tokens,
+               cache_read_tokens, output_tokens, reasoning_output_tokens,
+               model, source_cost_micros_usd, origin_path_hash
+        FROM usage_events
+        WHERE source = ? AND occurred_at_ms >= ? AND occurred_at_ms < ?
+        ORDER BY occurred_at_ms ASC
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bind(source.rawValue, at: 1, to: statement)
+        bind(Int64((from.timeIntervalSince1970 * 1_000).rounded()), at: 2, to: statement)
+        bind(Int64((through.timeIntervalSince1970 * 1_000).rounded()), at: 3, to: statement)
+
+        var result = initial
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let event = event(from: statement, source: source)
+            try update(&result, event)
         }
         return result
     }
@@ -324,6 +364,26 @@ public actor SQLiteUsageStore: UsageEventStore {
             bind(event.originPathHash, at: 13, to: statement)
             try stepDone(statement)
         }
+    }
+
+    private func event(from statement: OpaquePointer, source: UsageSource) -> NormalizedUsageEvent {
+        NormalizedUsageEvent(
+            eventKey: text(statement, 0) ?? "",
+            source: source,
+            sessionID: text(statement, 1),
+            occurredAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 2)) / 1_000),
+            tokens: TokenBreakdown(
+                input: sqlite3_column_int64(statement, 3),
+                cacheCreate5m: sqlite3_column_int64(statement, 4),
+                cacheCreate1h: sqlite3_column_int64(statement, 5),
+                cacheRead: sqlite3_column_int64(statement, 6),
+                output: sqlite3_column_int64(statement, 7),
+                reasoningOutput: sqlite3_column_int64(statement, 8)
+            ),
+            model: text(statement, 9),
+            sourceCostMicrosUSD: optionalInt64(statement, 10),
+            originPathHash: text(statement, 11) ?? ""
+        )
     }
 }
 

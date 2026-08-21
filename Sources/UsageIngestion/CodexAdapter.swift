@@ -31,73 +31,11 @@ public struct CodexAdapter: UsageSourceAdapter {
     }
 
     public func parse(_ data: Data, at sourceURL: URL) -> UsageParseResult {
-        let parsed = IncrementalJSONLParser.parse(data)
-        let pathHash = IngestionSupport.pathHash(sourceURL)
-        var sessionID: String? = sourceURL.deletingPathExtension().lastPathComponent
-        var model: String?
-        var previousTotal: TokenBreakdown?
-        var events: [NormalizedUsageEvent] = []
-        var seen = Set<String>()
+        makeStreamParser(at: sourceURL).consume(data, isFinal: false)
+    }
 
-        for line in parsed.completeLines {
-            guard let object = IngestionSupport.jsonObject(line),
-                  let payload = object["payload"] as? [String: Any]
-            else { continue }
-
-            let outerType = object["type"] as? String
-            let payloadType = payload["type"] as? String
-            if outerType == "session_meta" || payloadType == "session_meta" {
-                sessionID = IngestionSupport.string(payload, "id", "session_id", "sessionId") ?? sessionID
-            }
-            model = IngestionSupport.string(payload, "model", "model_name", "modelName") ?? model
-            if let info = payload["info"] as? [String: Any] {
-                model = IngestionSupport.string(info, "model", "model_name", "modelName") ?? model
-            }
-
-            guard outerType == "event_msg", payloadType == "token_count",
-                  let info = payload["info"] as? [String: Any],
-                  let occurredAt = IngestionSupport.date(object["timestamp"] ?? payload["timestamp"])
-            else { continue }
-
-            let totalDictionary = (info["total_token_usage"] ?? info["totalTokenUsage"]) as? [String: Any]
-            let lastDictionary = (info["last_token_usage"] ?? info["lastTokenUsage"]) as? [String: Any]
-            let total = totalDictionary.map(tokens(from:))
-            let delta: TokenBreakdown
-            if let lastDictionary {
-                delta = tokens(from: lastDictionary)
-            } else if let total {
-                delta = subtract(total, previousTotal)
-            } else {
-                continue
-            }
-            if let total { previousTotal = total }
-            guard delta.total > 0 || delta.reasoningOutput > 0 else { continue }
-
-            let identity: [String: Any] = [
-                "session": sessionID ?? "",
-                "timestamp": occurredAt.timeIntervalSince1970,
-                "tokens": tokenDictionary(delta),
-                "model": model ?? "",
-            ]
-            let eventKey = "codex:" + IngestionSupport.stableHash(identity)
-            guard seen.insert(eventKey).inserted else { continue }
-            events.append(NormalizedUsageEvent(
-                eventKey: eventKey,
-                source: .codex,
-                sessionID: sessionID,
-                occurredAt: occurredAt,
-                tokens: delta,
-                model: model,
-                originPathHash: pathHash
-            ))
-        }
-
-        return UsageParseResult(
-            events: events,
-            consumedByteCount: parsed.consumedByteCount,
-            remainder: parsed.remainder,
-            malformedLineCount: parsed.malformedLineCount
-        )
+    public func makeStreamParser(at sourceURL: URL) -> any UsageStreamParser {
+        CodexStreamParser(sourceURL: sourceURL)
     }
 
     /// Reads the newest Codex-provided account limit snapshot without calling a
@@ -192,7 +130,7 @@ public struct CodexAdapter: UsageSourceAdapter {
         return data
     }
 
-    private func tokens(from value: [String: Any]) -> TokenBreakdown {
+    fileprivate static func tokens(from value: [String: Any]) -> TokenBreakdown {
         let input = IngestionSupport.int64(value, "input_tokens", "inputTokens")
         let cached = IngestionSupport.int64(value, "cached_input_tokens", "cachedInputTokens", "cache_read_input_tokens")
         return TokenBreakdown(
@@ -203,7 +141,7 @@ public struct CodexAdapter: UsageSourceAdapter {
         )
     }
 
-    private func subtract(_ current: TokenBreakdown, _ previous: TokenBreakdown?) -> TokenBreakdown {
+    fileprivate static func subtract(_ current: TokenBreakdown, _ previous: TokenBreakdown?) -> TokenBreakdown {
         guard let previous else { return current }
         if current.input < previous.input || current.cacheRead < previous.cacheRead || current.output < previous.output {
             return current
@@ -218,7 +156,74 @@ public struct CodexAdapter: UsageSourceAdapter {
         )
     }
 
-    private func tokenDictionary(_ value: TokenBreakdown) -> [String: Int64] {
+    fileprivate static func tokenDictionary(_ value: TokenBreakdown) -> [String: Int64] {
         ["input": value.input, "cacheRead": value.cacheRead, "output": value.output, "reasoning": value.reasoningOutput]
+    }
+}
+
+private final class CodexStreamParser: UsageStreamParser {
+    private let pathHash: String
+    private var sessionID: String?
+    private var model: String?
+    private var previousTotal: TokenBreakdown?
+    private var buffer = JSONLUsageStreamBuffer()
+
+    init(sourceURL: URL) {
+        pathHash = IngestionSupport.pathHash(sourceURL)
+        sessionID = sourceURL.deletingPathExtension().lastPathComponent
+    }
+
+    func consume(_ data: Data, isFinal: Bool) -> UsageParseResult {
+        buffer.consume(data, isFinal: isFinal) { [weak self] object in
+            self?.event(from: object)
+        }
+    }
+
+    private func event(from object: [String: Any]) -> NormalizedUsageEvent? {
+        guard let payload = object["payload"] as? [String: Any] else { return nil }
+        let outerType = object["type"] as? String
+        let payloadType = payload["type"] as? String
+        if outerType == "session_meta" || payloadType == "session_meta" {
+            sessionID = IngestionSupport.string(payload, "id", "session_id", "sessionId") ?? sessionID
+        }
+        model = IngestionSupport.string(payload, "model", "model_name", "modelName") ?? model
+        if let info = payload["info"] as? [String: Any] {
+            model = IngestionSupport.string(info, "model", "model_name", "modelName") ?? model
+        }
+
+        guard outerType == "event_msg", payloadType == "token_count",
+              let info = payload["info"] as? [String: Any],
+              let occurredAt = IngestionSupport.date(object["timestamp"] ?? payload["timestamp"])
+        else { return nil }
+
+        let totalDictionary = (info["total_token_usage"] ?? info["totalTokenUsage"]) as? [String: Any]
+        let lastDictionary = (info["last_token_usage"] ?? info["lastTokenUsage"]) as? [String: Any]
+        let total = totalDictionary.map(CodexAdapter.tokens(from:))
+        let delta: TokenBreakdown
+        if let lastDictionary {
+            delta = CodexAdapter.tokens(from: lastDictionary)
+        } else if let total {
+            delta = CodexAdapter.subtract(total, previousTotal)
+        } else {
+            return nil
+        }
+        if let total { previousTotal = total }
+        guard delta.total > 0 || delta.reasoningOutput > 0 else { return nil }
+
+        let identity: [String: Any] = [
+            "session": sessionID ?? "",
+            "timestamp": occurredAt.timeIntervalSince1970,
+            "tokens": CodexAdapter.tokenDictionary(delta),
+            "model": model ?? "",
+        ]
+        return NormalizedUsageEvent(
+            eventKey: "codex:" + IngestionSupport.stableHash(identity),
+            source: .codex,
+            sessionID: sessionID,
+            occurredAt: occurredAt,
+            tokens: delta,
+            model: model,
+            originPathHash: pathHash
+        )
     }
 }

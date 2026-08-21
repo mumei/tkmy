@@ -24,61 +24,66 @@ public struct ClaudeCodeAdapter: UsageSourceAdapter {
     }
 
     public func parse(_ data: Data, at sourceURL: URL) -> UsageParseResult {
-        let parsed = IncrementalJSONLParser.parse(data)
-        let pathHash = IngestionSupport.pathHash(sourceURL)
-        var events: [NormalizedUsageEvent] = []
+        let result = makeStreamParser(at: sourceURL).consume(data, isFinal: false)
         var seen = Set<String>()
+        return UsageParseResult(
+            events: result.events.filter { seen.insert($0.eventKey).inserted },
+            consumedByteCount: result.consumedByteCount,
+            remainder: result.remainder,
+            malformedLineCount: result.malformedLineCount
+        )
+    }
 
-        for line in parsed.completeLines {
-            guard let object = IngestionSupport.jsonObject(line),
-                  (object["type"] as? String) == "assistant",
+    public func makeStreamParser(at sourceURL: URL) -> any UsageStreamParser {
+        ClaudeCodeStreamParser(sourceURL: sourceURL)
+    }
+}
+
+private final class ClaudeCodeStreamParser: UsageStreamParser {
+    private let pathHash: String
+    private var buffer = JSONLUsageStreamBuffer()
+
+    init(sourceURL: URL) {
+        pathHash = IngestionSupport.pathHash(sourceURL)
+    }
+
+    func consume(_ data: Data, isFinal: Bool) -> UsageParseResult {
+        buffer.consume(data, isFinal: isFinal) { [pathHash] object in
+            guard (object["type"] as? String) == "assistant",
                   let message = object["message"] as? [String: Any],
                   let usage = message["usage"] as? [String: Any],
                   let occurredAt = IngestionSupport.date(object["timestamp"] ?? message["timestamp"])
-            else { continue }
+            else { return nil }
 
-            let tokens = tokens(from: usage)
-            guard tokens.total > 0 || tokens.reasoningOutput > 0 else { continue }
+            let tokens = Self.tokens(from: usage)
+            guard tokens.total > 0 || tokens.reasoningOutput > 0 else { return nil }
             let sessionID = IngestionSupport.string(object, "sessionId", "session_id")
             let messageID = IngestionSupport.string(message, "id", "message_id")
             let requestID = IngestionSupport.string(object, "requestId", "request_id", "uuid")
             let model = IngestionSupport.string(message, "model")
-
-            // Message/request IDs survive transcript replay across files. When absent,
-            // use exact event contents so only byte-semantic duplicates collapse.
             let identity: [String: Any] = [
                 "message": messageID ?? "",
                 "request": requestID ?? "",
                 "session": sessionID ?? "",
                 "timestamp": occurredAt.timeIntervalSince1970,
-                "tokens": tokenDictionary(tokens),
+                "tokens": Self.tokenDictionary(tokens),
                 "model": model ?? "",
                 "sidechain": (object["isSidechain"] as? Bool) ?? false,
             ]
-            let eventKey = "claude-code:" + IngestionSupport.stableHash(identity)
-            guard seen.insert(eventKey).inserted else { continue }
-
-            events.append(NormalizedUsageEvent(
-                eventKey: eventKey,
+            return NormalizedUsageEvent(
+                eventKey: "claude-code:" + IngestionSupport.stableHash(identity),
                 source: .claudeCode,
                 sessionID: sessionID,
                 occurredAt: occurredAt,
                 tokens: tokens,
                 model: model,
-                sourceCostMicrosUSD: costMicros(object),
+                sourceCostMicrosUSD: Self.costMicros(object),
                 originPathHash: pathHash
-            ))
+            )
         }
-
-        return UsageParseResult(
-            events: events,
-            consumedByteCount: parsed.consumedByteCount,
-            remainder: parsed.remainder,
-            malformedLineCount: parsed.malformedLineCount
-        )
     }
 
-    private func tokens(from usage: [String: Any]) -> TokenBreakdown {
+    private static func tokens(from usage: [String: Any]) -> TokenBreakdown {
         let creation = usage["cache_creation"] as? [String: Any] ?? [:]
         let split5m = IngestionSupport.int64(creation, "ephemeral_5m_input_tokens", "ephemeral5mInputTokens")
         let split1h = IngestionSupport.int64(creation, "ephemeral_1h_input_tokens", "ephemeral1hInputTokens")
@@ -93,7 +98,7 @@ public struct ClaudeCodeAdapter: UsageSourceAdapter {
         )
     }
 
-    private func costMicros(_ object: [String: Any]) -> Int64? {
+    private static func costMicros(_ object: [String: Any]) -> Int64? {
         let raw = object["costUSD"] ?? object["cost_usd"]
         if let number = raw as? NSNumber { return Int64((number.doubleValue * 1_000_000).rounded()) }
         if let string = raw as? String, let value = Decimal(string: string) {
@@ -105,7 +110,7 @@ public struct ClaudeCodeAdapter: UsageSourceAdapter {
         return nil
     }
 
-    private func tokenDictionary(_ value: TokenBreakdown) -> [String: Int64] {
+    private static func tokenDictionary(_ value: TokenBreakdown) -> [String: Int64] {
         [
             "input": value.input,
             "cache5m": value.cacheCreate5m,

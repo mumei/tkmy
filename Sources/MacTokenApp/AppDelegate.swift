@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewModels: [SourceUsageViewModel] = []
     private var fallbackRefreshTimer: Timer?
     private var settingsWindowController: SettingsWindowController?
+    private var isRefreshing = false
+    private var refreshPending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -101,11 +103,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshAll() async {
-        await withTaskGroup(of: Void.self) { group in
-            for model in viewModels {
-                group.addTask { await model.refresh() }
-            }
+        if isRefreshing {
+            refreshPending = true
+            return
         }
+        isRefreshing = true
+        repeat {
+            refreshPending = false
+            await withTaskGroup(of: Void.self) { group in
+                for model in viewModels {
+                    group.addTask { await model.refresh() }
+                }
+            }
+        } while refreshPending
+        isRefreshing = false
     }
 
     private func presentStartupFailure(_ error: Error) {
