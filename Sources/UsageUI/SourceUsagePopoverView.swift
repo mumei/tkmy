@@ -290,13 +290,20 @@ public struct SourceUsagePopoverView: View {
                 .frame(height: Layout.selectedDayHeaderHeight, alignment: .top)
                 .reportPopoverFrame(.selectedDayHeader)
 
-                LazyVGrid(columns: Layout.detailColumns, alignment: .leading, spacing: 8) {
-                    DetailMetricView(title: L10n.text("total"), value: usage.map { TokenText.exact($0.tokens.total) } ?? "0")
-                    DetailMetricView(title: L10n.text("input"), value: usage.map { TokenText.exact($0.tokens.input) } ?? "0")
-                    DetailMetricView(title: L10n.text("output"), value: usage.map { TokenText.exact($0.tokens.output) } ?? "0")
-                    DetailMetricView(title: L10n.text("cache_create"), value: usage.map { TokenText.exact($0.tokens.cacheCreate5m + $0.tokens.cacheCreate1h) } ?? "0")
-                    DetailMetricView(title: L10n.text("cache_read"), value: usage.map { TokenText.exact($0.tokens.cacheRead) } ?? "0")
-                    DetailMetricView(title: L10n.text("estimated_cost"), value: CostText.value(for: usage))
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 16) {
+                        DetailMetricView(title: L10n.text("total"), value: usage.map { TokenText.exact($0.tokens.total) } ?? "0")
+                        DetailMetricView(title: L10n.text("input"), value: usage.map { TokenText.exact($0.tokens.input) } ?? "0")
+                        DetailMetricView(title: L10n.text("output"), value: usage.map { TokenText.exact($0.tokens.output) } ?? "0")
+                    }
+
+                    HStack(alignment: .top, spacing: 16) {
+                        if expectedSource == .claudeCode {
+                            DetailMetricView(title: L10n.text("cache_create"), value: usage.map { TokenText.exact($0.tokens.cacheCreate5m + $0.tokens.cacheCreate1h) } ?? "0")
+                        }
+                        DetailMetricView(title: L10n.text("cache_read"), value: usage.map { TokenText.exact($0.tokens.cacheRead) } ?? "0")
+                        DetailMetricView(title: L10n.text("estimated_cost"), value: CostText.value(for: usage))
+                    }
                 }
 
                 Divider()
@@ -961,10 +968,6 @@ private enum Layout {
     static let heatmapGridHeight: CGFloat = 78
     static let selectedDayHeaderHeight: CGFloat = 18
     static let modelRowHeight = SourceUsagePopoverSizing.modelRowHeight
-    static let detailColumns = Array(
-        repeating: GridItem(.flexible(minimum: 150), spacing: 16, alignment: .leading),
-        count: 3
-    )
     static let modelColumns = Array(
         repeating: GridItem(.flexible(minimum: 110), spacing: 12, alignment: .leading),
         count: SourceUsagePopoverSizing.modelColumnCount

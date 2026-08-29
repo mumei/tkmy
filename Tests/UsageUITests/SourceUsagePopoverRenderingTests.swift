@@ -86,7 +86,7 @@ func usagePopoverRendersEveryLanguageAndModelRowCount() throws {
                 "Selected-day header escaped the card for \(caseName)"
             )
             #expect(
-                rendered.metrics.detailMetricFrames.count == 6,
+                rendered.metrics.detailMetricFrames.count == 5,
                 "Unexpected rendered detail metric count for \(caseName)"
             )
             #expect(
@@ -128,6 +128,35 @@ func usagePopoverRendersEveryLanguageAndModelRowCount() throws {
                 "Unexpected model grid row count for \(caseName)"
             )
         }
+
+        let claudeRendered = try renderPopover(
+            language: language,
+            modelCount: 4,
+            source: .claudeCode
+        )
+        try claudeRendered.pngData.write(
+            to: snapshotDirectory.appendingPathComponent(
+                "claude-code-\(language.rawValue)-models-04.png"
+            ),
+            options: .atomic
+        )
+        #expect(
+            claudeRendered.metrics.detailMetricFrames.count == 6,
+            "Claude Code should keep the cache creation metric for \(language.rawValue)"
+        )
+        #expect(
+            claudeRendered.metrics.detailMetricFrames.allSatisfy {
+                approximatelyContains(claudeRendered.metrics.selectedDayDetailFrame, $0)
+            },
+            "A Claude Code detail metric escaped the card for \(language.rawValue)"
+        )
+        #expect(
+            !approximatelyIntersects(
+                claudeRendered.metrics.selectedDayDetailFrame,
+                claudeRendered.metrics.footerFrame
+            ),
+            "Claude Code selected-day card overlapped the footer for \(language.rawValue)"
+        )
     }
 }
 
@@ -138,19 +167,24 @@ private struct RenderedPopover {
 }
 
 @MainActor
-private func renderPopover(language: AppLanguage, modelCount: Int) throws -> RenderedPopover {
+private func renderPopover(
+    language: AppLanguage,
+    modelCount: Int,
+    source: UsageSource = .codex
+) throws -> RenderedPopover {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(secondsFromGMT: 0)!
     let today = calendar.startOfDay(for: Date())
-    let viewModel = SourceUsageViewModel(source: .codex, calendar: calendar)
+    let viewModel = SourceUsageViewModel(source: source, calendar: calendar)
     let dailyUsage = modelCount == 0
         ? []
         : [
             DailyUsage(
                 day: today,
-                source: .codex,
+                source: source,
                 tokens: TokenBreakdown(
                     input: 37_120_332,
+                    cacheCreate5m: source == .claudeCode ? 4_200_000 : 0,
                     cacheRead: 1_160_370_304,
                     output: 3_889_813
                 ),
@@ -159,9 +193,9 @@ private func renderPopover(language: AppLanguage, modelCount: Int) throws -> Ren
             ),
         ]
     let snapshot = SourceUsageSnapshot(
-        source: .codex,
+        source: source,
         dailyUsage: dailyUsage,
-        dailyModelUsage: makeModelUsage(count: modelCount, day: today),
+        dailyModelUsage: makeModelUsage(count: modelCount, day: today, source: source),
         refreshedAt: today,
         pricingUpdatedAt: today
     )
@@ -172,7 +206,7 @@ private func renderPopover(language: AppLanguage, modelCount: Int) throws -> Ren
     let size = CGSize(width: SourceUsagePopoverSizing.width, height: height)
     let rootView = SourceUsagePopoverView(
         viewModel: viewModel,
-        expectedSource: .codex,
+        expectedSource: source,
         layoutObserver: { metrics in latestMetrics = metrics }
     )
     .environment(\.calendar, calendar)
@@ -248,22 +282,34 @@ private func renderPopover(language: AppLanguage, modelCount: Int) throws -> Ren
     return RenderedPopover(metrics: metrics, expectedSize: size, pngData: pngData)
 }
 
-private func makeModelUsage(count: Int, day: Date) -> [DailyModelUsage] {
-    let names: [String?] = [
-        "gpt-5.6-sol",
-        "gpt-5.5",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "codex-auto-review",
-        nil,
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex-spark",
-    ]
+private func makeModelUsage(count: Int, day: Date, source: UsageSource) -> [DailyModelUsage] {
+    let names: [String?] = source == .codex
+        ? [
+            "gpt-5.6-sol",
+            "gpt-5.5",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "codex-auto-review",
+            nil,
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex-spark",
+        ]
+        : [
+            "claude-opus-4-1",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            nil,
+            "claude-sonnet-4-5",
+            "claude-opus-4",
+            "claude-haiku-3-5",
+            "claude-sonnet-3-7",
+            "claude-opus-3",
+        ]
     return names.prefix(count).enumerated().map { index, name in
         DailyModelUsage(
             day: day,
-            source: .codex,
+            source: source,
             model: name,
             tokens: TokenBreakdown(
                 input: Int64(110_000_000 - (index * 7_250_000)),
