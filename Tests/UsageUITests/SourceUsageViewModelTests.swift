@@ -82,6 +82,24 @@ import UsageDomain
     ])
 }
 
+@Test func popoverHeightExpandsForAdditionalModelRows() {
+    let day = Date(timeIntervalSince1970: 1_700_000_000)
+    let makeUsage: (Int) -> DailyModelUsage = { index in
+        DailyModelUsage(
+            day: day,
+            source: .codex,
+            model: "model-\(index)",
+            tokens: .init(input: 1)
+        )
+    }
+
+    #expect(SourceUsagePopoverSizing.contentHeight(for: []) == 566)
+    #expect(SourceUsagePopoverSizing.contentHeight(for: (0..<4).map(makeUsage)) == 566)
+    #expect(SourceUsagePopoverSizing.contentHeight(for: (0..<5).map(makeUsage)) == 604)
+    #expect(SourceUsagePopoverSizing.modelSectionHeight(for: (0..<5).map(makeUsage)) == 89)
+    #expect(SourceUsagePopoverSizing.contentHeight(for: (0..<9).map(makeUsage)) == 642)
+}
+
 private func usage(
     year: Int,
     month: Int,

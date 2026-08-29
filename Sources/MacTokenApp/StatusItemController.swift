@@ -40,9 +40,13 @@ final class StatusItemController: NSObject {
         case .codex: AnyView(CodexUsagePopoverView(viewModel: viewModel))
         case .claudeCode: AnyView(ClaudeCodeUsagePopoverView(viewModel: viewModel))
         }
+        let initialPanelSize = NSSize(
+            width: SourceUsagePopoverSizing.width,
+            height: SourceUsagePopoverSizing.contentHeight(for: viewModel.dailyModelUsage)
+        )
         detailPanel = AnchoredDetailPanel(
             contentViewController: NSHostingController(rootView: rootView),
-            contentSize: NSSize(width: 640, height: 560)
+            contentSize: initialPanelSize
         )
         super.init()
         detailPanel.closeRequested = { [weak self] in self?.close() }
@@ -67,6 +71,10 @@ final class StatusItemController: NSObject {
         viewModel.$usageLimit
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateTitle() }
+            .store(in: &cancellables)
+        viewModel.$dailyModelUsage
+            .receive(on: RunLoop.main)
+            .sink { [weak self] usage in self?.updateDetailPanelSize(for: usage) }
             .store(in: &cancellables)
         menuVisibilityPublisher
             .receive(on: RunLoop.main)
@@ -262,6 +270,16 @@ final class StatusItemController: NSObject {
         let maximumY = max(minimumY, visibleFrame.maxY - panelSize.height - inset)
         let y = min(max(below, minimumY), maximumY)
         detailPanel.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
+    }
+
+    private func updateDetailPanelSize(for usage: [DailyModelUsage]) {
+        let size = NSSize(
+            width: SourceUsagePopoverSizing.width,
+            height: SourceUsagePopoverSizing.contentHeight(for: usage)
+        )
+        guard detailPanel.contentView?.frame.size != size else { return }
+        detailPanel.setContentSize(size)
+        repositionIfShown()
     }
 
     private func installClickMonitors() {

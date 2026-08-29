@@ -31,6 +31,14 @@ jobs:
           done
       - name: Test
         run: swift test
+      - name: Upload UI snapshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: TKMY-ui-snapshots-${{ github.sha }}
+          path: .build/ui-snapshots/*.png
+          if-no-files-found: error
+          retention-days: 14
       - name: Build release app bundle
         run: ./Scripts/build-app.sh
       - name: Validate app bundle

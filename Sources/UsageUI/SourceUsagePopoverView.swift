@@ -33,18 +33,25 @@ public struct ClaudeCodeUsagePopoverView: View {
 public struct SourceUsagePopoverView: View {
     @ObservedObject private var viewModel: SourceUsageViewModel
     private let expectedSource: UsageSource
+    private let layoutObserver: ((SourceUsagePopoverLayoutMetrics) -> Void)?
     @State private var hoveredDay: Date?
     @AppStorage(L10n.defaultsKey) private var languageRawValue = AppLanguage.systemDefault().rawValue
 
     public init(viewModel: SourceUsageViewModel) {
         self.viewModel = viewModel
         self.expectedSource = viewModel.source
+        self.layoutObserver = nil
         self._hoveredDay = State(initialValue: nil)
     }
 
-    init(viewModel: SourceUsageViewModel, expectedSource: UsageSource) {
+    init(
+        viewModel: SourceUsageViewModel,
+        expectedSource: UsageSource,
+        layoutObserver: ((SourceUsagePopoverLayoutMetrics) -> Void)? = nil
+    ) {
         self.viewModel = viewModel
         self.expectedSource = expectedSource
+        self.layoutObserver = layoutObserver
         self._hoveredDay = State(initialValue: nil)
     }
 
@@ -56,8 +63,19 @@ public struct SourceUsagePopoverView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(Layout.outerPadding)
-        .frame(width: Layout.popoverWidth, height: Layout.popoverHeight, alignment: .topLeading)
+        .frame(
+            width: SourceUsagePopoverSizing.width,
+            height: SourceUsagePopoverSizing.contentHeight(for: viewModel.dailyModelUsage),
+            alignment: .topLeading
+        )
         .background(Color(nsColor: .windowBackgroundColor))
+        .coordinateSpace(name: Layout.coordinateSpaceName)
+        .reportPopoverFrame(.root)
+        .onPreferenceChange(SourceUsagePopoverLayoutPreferenceKey.self) { value in
+            guard let metrics = value.metrics else { return }
+            layoutObserver?(metrics)
+        }
+        .environment(\.sourceUsagePopoverLayoutReportingEnabled, layoutObserver != nil)
         .environment(\.locale, selectedLanguageLocale)
         .task { await viewModel.refresh() }
     }
@@ -270,6 +288,7 @@ public struct SourceUsagePopoverView: View {
                     }
                 }
                 .frame(height: Layout.selectedDayHeaderHeight, alignment: .top)
+                .reportPopoverFrame(.selectedDayHeader)
 
                 LazyVGrid(columns: Layout.detailColumns, alignment: .leading, spacing: 8) {
                     DetailMetricView(title: L10n.text("total"), value: usage.map { TokenText.exact($0.tokens.total) } ?? "0")
@@ -304,11 +323,17 @@ public struct SourceUsagePopoverView: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: Layout.modelSectionHeight, alignment: .topLeading)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: SourceUsagePopoverSizing.modelSectionHeight(for: viewModel.dailyModelUsage),
+                    alignment: .topLeading
+                )
+                .reportPopoverFrame(.modelSection)
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
+            .reportPopoverFrame(.selectedDayDetail)
             .accessibilityElement(children: .contain)
             .accessibilityLabel(L10n.text("selected_day_details"))
         } else {
@@ -349,6 +374,7 @@ public struct SourceUsagePopoverView: View {
         }
         .font(.caption2)
         .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .bottomLeading)
+        .reportPopoverFrame(.footer)
     }
 }
 
@@ -529,6 +555,7 @@ private struct ModelUsageView: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, minHeight: Layout.modelRowHeight, alignment: .topLeading)
+        .reportPopoverFrame(.modelItem)
         .help(
             usage.model == nil
                 ? L10n.text("model_missing_help")
@@ -584,6 +611,7 @@ private struct DetailMetricView: View {
                 .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+        .reportPopoverFrame(.detailMetric)
         .accessibilityElement(children: .combine)
     }
 }
@@ -732,9 +760,196 @@ private enum CostText {
     }
 }
 
+public enum SourceUsagePopoverSizing {
+    private struct DayKey: Hashable {
+        let source: UsageSource
+        let day: Date
+    }
+
+    public static let width: CGFloat = 640
+    public static let baseHeight: CGFloat = 566
+    public static let modelColumnCount = 4
+    public static let modelRowHeight: CGFloat = 32
+    public static let modelRowSpacing: CGFloat = 6
+    public static let baseModelSectionHeight: CGFloat = 51
+
+    public static func maximumModelCountPerDay(
+        in usage: [DailyModelUsage],
+        calendar: Calendar = .current
+    ) -> Int {
+        Dictionary(grouping: usage) {
+            DayKey(source: $0.source, day: calendar.startOfDay(for: $0.day))
+        }
+        .values
+        .map(\.count)
+        .max() ?? 0
+    }
+
+    public static func modelRowCount(
+        for usage: [DailyModelUsage],
+        calendar: Calendar = .current
+    ) -> Int {
+        let count = maximumModelCountPerDay(in: usage, calendar: calendar)
+        return max(1, (count + modelColumnCount - 1) / modelColumnCount)
+    }
+
+    public static func modelSectionHeight(
+        for usage: [DailyModelUsage],
+        calendar: Calendar = .current
+    ) -> CGFloat {
+        baseModelSectionHeight + additionalHeight(for: usage, calendar: calendar)
+    }
+
+    public static func contentHeight(
+        for usage: [DailyModelUsage],
+        calendar: Calendar = .current
+    ) -> CGFloat {
+        baseHeight + additionalHeight(for: usage, calendar: calendar)
+    }
+
+    private static func additionalHeight(
+        for usage: [DailyModelUsage],
+        calendar: Calendar
+    ) -> CGFloat {
+        CGFloat(modelRowCount(for: usage, calendar: calendar) - 1) * (modelRowHeight + modelRowSpacing)
+    }
+}
+
+struct SourceUsagePopoverLayoutMetrics: Equatable {
+    let rootFrame: CGRect
+    let selectedDayDetailFrame: CGRect
+    let selectedDayHeaderFrame: CGRect
+    let detailMetricFrames: [CGRect]
+    let modelSectionFrame: CGRect
+    let footerFrame: CGRect
+    let modelItemFrames: [CGRect]
+}
+
+private enum SourceUsagePopoverLayoutElement {
+    case root
+    case selectedDayDetail
+    case selectedDayHeader
+    case detailMetric
+    case modelSection
+    case modelItem
+    case footer
+}
+
+private struct SourceUsagePopoverLayoutPreference: Equatable {
+    var rootFrame: CGRect?
+    var selectedDayDetailFrame: CGRect?
+    var selectedDayHeaderFrame: CGRect?
+    var detailMetricFrames: [CGRect] = []
+    var modelSectionFrame: CGRect?
+    var footerFrame: CGRect?
+    var modelItemFrames: [CGRect] = []
+
+    init(frame: CGRect? = nil, element: SourceUsagePopoverLayoutElement? = nil) {
+        guard let frame, let element else { return }
+        switch element {
+        case .root:
+            rootFrame = frame
+        case .selectedDayDetail:
+            selectedDayDetailFrame = frame
+        case .selectedDayHeader:
+            selectedDayHeaderFrame = frame
+        case .detailMetric:
+            detailMetricFrames = [frame]
+        case .modelSection:
+            modelSectionFrame = frame
+        case .modelItem:
+            modelItemFrames = [frame]
+        case .footer:
+            footerFrame = frame
+        }
+    }
+
+    mutating func merge(_ next: Self) {
+        rootFrame = next.rootFrame ?? rootFrame
+        selectedDayDetailFrame = next.selectedDayDetailFrame ?? selectedDayDetailFrame
+        selectedDayHeaderFrame = next.selectedDayHeaderFrame ?? selectedDayHeaderFrame
+        detailMetricFrames.append(contentsOf: next.detailMetricFrames)
+        modelSectionFrame = next.modelSectionFrame ?? modelSectionFrame
+        footerFrame = next.footerFrame ?? footerFrame
+        modelItemFrames.append(contentsOf: next.modelItemFrames)
+    }
+
+    var metrics: SourceUsagePopoverLayoutMetrics? {
+        guard
+            let rootFrame,
+            let selectedDayDetailFrame,
+            let selectedDayHeaderFrame,
+            let modelSectionFrame,
+            let footerFrame
+        else {
+            return nil
+        }
+        return SourceUsagePopoverLayoutMetrics(
+            rootFrame: rootFrame,
+            selectedDayDetailFrame: selectedDayDetailFrame,
+            selectedDayHeaderFrame: selectedDayHeaderFrame,
+            detailMetricFrames: detailMetricFrames,
+            modelSectionFrame: modelSectionFrame,
+            footerFrame: footerFrame,
+            modelItemFrames: modelItemFrames
+        )
+    }
+}
+
+private struct SourceUsagePopoverLayoutPreferenceKey: PreferenceKey {
+    static let defaultValue = SourceUsagePopoverLayoutPreference()
+
+    static func reduce(
+        value: inout SourceUsagePopoverLayoutPreference,
+        nextValue: () -> SourceUsagePopoverLayoutPreference
+    ) {
+        value.merge(nextValue())
+    }
+}
+
+private struct SourceUsagePopoverLayoutReportingEnabledKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var sourceUsagePopoverLayoutReportingEnabled: Bool {
+        get { self[SourceUsagePopoverLayoutReportingEnabledKey.self] }
+        set { self[SourceUsagePopoverLayoutReportingEnabledKey.self] = newValue }
+    }
+}
+
+private struct SourceUsagePopoverLayoutReporter: View {
+    @Environment(\.sourceUsagePopoverLayoutReportingEnabled) private var isEnabled
+    let element: SourceUsagePopoverLayoutElement
+
+    @ViewBuilder
+    var body: some View {
+        if isEnabled {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: SourceUsagePopoverLayoutPreferenceKey.self,
+                    value: SourceUsagePopoverLayoutPreference(
+                        frame: proxy.frame(in: .named(Layout.coordinateSpaceName)),
+                        element: element
+                    )
+                )
+            }
+        } else {
+            Color.clear
+        }
+    }
+}
+
+private extension View {
+    func reportPopoverFrame(_ element: SourceUsagePopoverLayoutElement) -> some View {
+        background {
+            SourceUsagePopoverLayoutReporter(element: element)
+        }
+    }
+}
+
 private enum Layout {
-    static let popoverWidth: CGFloat = 640
-    static let popoverHeight: CGFloat = 560
+    static let coordinateSpaceName = "source-usage-popover"
     static let outerPadding: CGFloat = 16
     static let headerHeight: CGFloat = 24
     static let headerAccessoryWidth: CGFloat = 48
@@ -745,14 +960,13 @@ private enum Layout {
     static let weekdayLabelWidth: CGFloat = 12
     static let heatmapGridHeight: CGFloat = 78
     static let selectedDayHeaderHeight: CGFloat = 18
-    static let modelRowHeight: CGFloat = 32
-    static let modelSectionHeight: CGFloat = 51
+    static let modelRowHeight = SourceUsagePopoverSizing.modelRowHeight
     static let detailColumns = Array(
         repeating: GridItem(.flexible(minimum: 150), spacing: 16, alignment: .leading),
         count: 3
     )
     static let modelColumns = Array(
         repeating: GridItem(.flexible(minimum: 110), spacing: 12, alignment: .leading),
-        count: 4
+        count: SourceUsagePopoverSizing.modelColumnCount
     )
 }
