@@ -14,7 +14,9 @@ The app reads local JSONL usage records. Prompt text, responses, source code, pr
 
 This repository contains an executable Swift Package implementation of the MVP. Pricing is an estimate, not a bill. Unknown model pricing is shown as unavailable instead of `$0.00`.
 
-The bundled catalog covers current publicly priced Codex model families and Claude Sonnet 4.6. Its official source URLs and retrieval date are embedded in the catalog; preview or internal model names without a published API price remain explicitly unpriced until a reviewed catalog update adds them.
+The bundled catalog includes GPT-6 Astra, GPT-5.6 Sol/Terra/Luna, earlier supported Codex models, and Claude Fable 5.1/5, Mythos 5.1/5, Opus 5/4.8/4.7/4.6/4.5, Sonnet 5/4.6, and Haiku 4.5. Pricing was reviewed on September 6, 2026 against the [OpenAI pricing documentation](https://developers.openai.com/api/docs/pricing) and [Claude pricing documentation](https://platform.claude.com/docs/en/about-claude/pricing). GPT-5.6 Sol uses the currently published promotional rates; Sonnet 5 uses its confirmed standard rates, with no September 1 increase. Fable 5.1 and Mythos 5.1 use their reduced cache-read rate.
+
+Estimates use the current catalog's standard token rates, including short-context rates for OpenAI models. Long-context premiums, Fast/Priority processing, Batch/Flex discounts, regional pricing, and tool charges are not inferred from local logs. Only token categories recorded in the logs can be priced; Codex cache-write tokens are not currently reported by this parser. Historical usage without a logged cost is recalculated with the current catalog; a cost reported by the source takes precedence. Official source URLs and retrieval dates are embedded in the catalog. Models without reviewed pricing remain explicitly unpriced.
 
 ## Requirements
 

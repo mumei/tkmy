@@ -146,10 +146,72 @@ final class UsagePricingTests: XCTestCase {
 
     func testBundledCatalogCoversCurrentCodexModelFamilies() throws {
         let catalog = try PricingCatalog.bundled().validated()
-        for model in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+        for model in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"] {
             XCTAssertNotNil(catalog.pricing(for: model), "Missing reviewed pricing for \(model)")
         }
         XCTAssertNil(catalog.pricing(for: "gpt-5.3-codex-spark"))
+    }
+
+    func testBundledCatalogPricesAstraAndSolAliasAtCurrentRates() throws {
+        let calculator = try UsagePriceCalculator(catalog: PricingCatalog.bundled().validated())
+        let allCategories = TokenBreakdown(
+            input: 10_000,
+            cacheCreate5m: 20_000,
+            cacheCreate1h: 30_000,
+            cacheRead: 40_000,
+            output: 50_000
+        )
+
+        let astra = try calculator.price(makeEvent(model: "gpt-6-astra", tokens: allCategories))
+        XCTAssertEqual(astra, EventPrice(costMicrosUSD: 3_265_000, basis: .catalog(canonicalModel: "gpt-6-astra")))
+
+        let sol = try calculator.price(makeEvent(model: "gpt-5.6-2026-09-01", tokens: allCategories))
+        XCTAssertEqual(sol, EventPrice(costMicrosUSD: 1_306_000, basis: .catalog(canonicalModel: "gpt-5.6-sol")))
+    }
+
+    func testBundledCatalogPricesNewClaudeFamiliesAcrossTokenCategories() throws {
+        let calculator = try UsagePriceCalculator(catalog: PricingCatalog.bundled().validated())
+        let allCategories = TokenBreakdown(
+            input: 10_000,
+            cacheCreate5m: 20_000,
+            cacheCreate1h: 30_000,
+            cacheRead: 40_000,
+            output: 50_000
+        )
+        let cases: [(model: String, canonical: String, cost: Int64)] = [
+            ("claude-fable-5.1-20260901", "claude-fable-5-1", 3_460_000),
+            ("mythos-5.1", "claude-mythos-5-1", 3_460_000),
+            ("fable-5", "claude-fable-5", 3_490_000),
+            ("claude-mythos-5", "claude-mythos-5", 3_490_000),
+            ("opus-5", "claude-opus-5", 1_745_000),
+            ("claude-opus-4.8", "claude-opus-4-8", 1_745_000),
+            ("opus-4.7", "claude-opus-4-7", 1_745_000),
+            ("opus-4.6", "claude-opus-4-6", 1_745_000),
+            ("opus-4.5", "claude-opus-4-5", 1_745_000),
+            ("sonnet-5-2026-09-02", "claude-sonnet-5", 698_000),
+            ("haiku-4.5", "claude-haiku-4-5", 349_000),
+        ]
+
+        for testCase in cases {
+            let price = try calculator.price(makeEvent(model: testCase.model, tokens: allCategories))
+            XCTAssertEqual(price.costMicrosUSD, testCase.cost, testCase.model)
+            XCTAssertEqual(price.basis, .catalog(canonicalModel: testCase.canonical), testCase.model)
+        }
+    }
+
+    func testFableAndMythosFivePointOneCacheReadIsDiscountedFromFive() throws {
+        let calculator = try UsagePriceCalculator(catalog: PricingCatalog.bundled().validated())
+        let cacheRead = TokenBreakdown(cacheRead: 1_000_000)
+
+        XCTAssertEqual(try calculator.price(makeEvent(model: "fable-5.1", tokens: cacheRead)).costMicrosUSD, 250_000)
+        XCTAssertEqual(try calculator.price(makeEvent(model: "fable-5", tokens: cacheRead)).costMicrosUSD, 1_000_000)
+        XCTAssertEqual(try calculator.price(makeEvent(model: "mythos-5.1", tokens: cacheRead)).costMicrosUSD, 250_000)
+        XCTAssertEqual(try calculator.price(makeEvent(model: "mythos-5", tokens: cacheRead)).costMicrosUSD, 1_000_000)
+    }
+
+    func testBundledCatalogEffectiveDateReflectsReviewedPricing() throws {
+        let catalog = try PricingCatalog.bundled().validated()
+        XCTAssertEqual(catalog.effectiveDate, "2026-09-06")
     }
 
     func testDuplicateAliasIsRejected() {

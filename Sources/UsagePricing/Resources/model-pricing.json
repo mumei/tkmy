@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "effectiveDate": "2026-08-03",
+  "effectiveDate": "2026-09-06",
   "provenance": [
     {
       "provider": "OpenAI",
@@ -17,14 +17,38 @@
     {
       "provider": "OpenAI",
       "url": "https://developers.openai.com/api/docs/pricing",
-      "retrievedAt": "2026-08-03",
-      "note": "Standard short-context pricing for current GPT-5.4, GPT-5.5, and GPT-5.6 families. Long-context and non-standard service tiers are not inferred from local Codex logs."
+      "retrievedAt": "2026-09-06",
+      "note": "Standard short-context pricing for current GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 families. GPT-5.6 Sol uses the promotional rate listed when retrieved; this catalog makes no assumption about its expiry or future rate. Estimates exclude long-context premiums and non-standard service tiers."
+    },
+    {
+      "provider": "OpenAI",
+      "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "retrievedAt": "2026-09-06",
+      "note": "GPT-6 Astra cache writes cost 1.25x input. Prompts above 272K input tokens have higher full-request rates; this catalog uses the Standard short-context rates from the pricing page."
+    },
+    {
+      "provider": "OpenAI",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "retrievedAt": "2026-09-06",
+      "note": "The gpt-5.6 alias routes to GPT-5.6 Sol. The published promotional pricing is available at least through November 21, 2026; no future price is assumed."
     },
     {
       "provider": "Anthropic",
       "url": "https://docs.anthropic.com/en/docs/about-claude/pricing",
       "retrievedAt": "2026-08-03",
       "note": "Claude Sonnet 4.6 standard input/output and prompt-cache prices. Claude 4.6 includes the full 1M context window at standard pricing. Older long-context variants are intentionally left unpriced."
+    },
+    {
+      "provider": "Anthropic",
+      "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrievedAt": "2026-09-06",
+      "note": "Standard Claude input/output and prompt-cache prices, including Fable, Mythos, Opus, Sonnet, and Haiku families. Estimates exclude non-standard tiers; Claude 4.6 and later use full-context standard pricing."
+    },
+    {
+      "provider": "Anthropic",
+      "url": "https://platform.claude.com/docs/en/models/overview",
+      "retrievedAt": "2026-09-06",
+      "note": "Model-family naming and availability reference for the reviewed Claude models."
     }
   ],
   "models": [
@@ -85,13 +109,24 @@
     },
     {
       "canonicalName": "gpt-5.6-sol",
+      "aliases": ["gpt-5.6"],
+      "rates": {
+        "input": 4000000,
+        "output": 20000000,
+        "cacheCreate5m": 5000000,
+        "cacheCreate1h": 5000000,
+        "cacheRead": 400000
+      }
+    },
+    {
+      "canonicalName": "gpt-6-astra",
       "aliases": [],
       "rates": {
-        "input": 5000000,
-        "output": 30000000,
-        "cacheCreate5m": 6250000,
-        "cacheCreate1h": 6250000,
-        "cacheRead": 500000
+        "input": 10000000,
+        "output": 50000000,
+        "cacheCreate5m": 12500000,
+        "cacheCreate1h": 12500000,
+        "cacheRead": 1000000
       }
     },
     {
@@ -125,6 +160,127 @@
         "cacheCreate5m": 3750000,
         "cacheCreate1h": 6000000,
         "cacheRead": 300000
+      }
+    },
+    {
+      "canonicalName": "claude-fable-5-1",
+      "aliases": ["claude-fable-5.1", "fable-5.1"],
+      "rates": {
+        "input": 10000000,
+        "output": 50000000,
+        "cacheCreate5m": 12500000,
+        "cacheCreate1h": 20000000,
+        "cacheRead": 250000
+      }
+    },
+    {
+      "canonicalName": "claude-mythos-5-1",
+      "aliases": ["claude-mythos-5.1", "mythos-5.1"],
+      "rates": {
+        "input": 10000000,
+        "output": 50000000,
+        "cacheCreate5m": 12500000,
+        "cacheCreate1h": 20000000,
+        "cacheRead": 250000
+      }
+    },
+    {
+      "canonicalName": "claude-fable-5",
+      "aliases": ["fable-5"],
+      "rates": {
+        "input": 10000000,
+        "output": 50000000,
+        "cacheCreate5m": 12500000,
+        "cacheCreate1h": 20000000,
+        "cacheRead": 1000000
+      }
+    },
+    {
+      "canonicalName": "claude-mythos-5",
+      "aliases": ["mythos-5"],
+      "rates": {
+        "input": 10000000,
+        "output": 50000000,
+        "cacheCreate5m": 12500000,
+        "cacheCreate1h": 20000000,
+        "cacheRead": 1000000
+      }
+    },
+    {
+      "canonicalName": "claude-opus-5",
+      "aliases": ["opus-5"],
+      "rates": {
+        "input": 5000000,
+        "output": 25000000,
+        "cacheCreate5m": 6250000,
+        "cacheCreate1h": 10000000,
+        "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "claude-opus-4-8",
+      "aliases": ["claude-opus-4.8", "opus-4.8"],
+      "rates": {
+        "input": 5000000,
+        "output": 25000000,
+        "cacheCreate5m": 6250000,
+        "cacheCreate1h": 10000000,
+        "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "claude-opus-4-7",
+      "aliases": ["claude-opus-4.7", "opus-4.7"],
+      "rates": {
+        "input": 5000000,
+        "output": 25000000,
+        "cacheCreate5m": 6250000,
+        "cacheCreate1h": 10000000,
+        "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "claude-opus-4-6",
+      "aliases": ["claude-opus-4.6", "opus-4.6"],
+      "rates": {
+        "input": 5000000,
+        "output": 25000000,
+        "cacheCreate5m": 6250000,
+        "cacheCreate1h": 10000000,
+        "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "claude-opus-4-5",
+      "aliases": ["claude-opus-4.5", "opus-4.5"],
+      "rates": {
+        "input": 5000000,
+        "output": 25000000,
+        "cacheCreate5m": 6250000,
+        "cacheCreate1h": 10000000,
+        "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "claude-sonnet-5",
+      "aliases": ["sonnet-5"],
+      "rates": {
+        "input": 2000000,
+        "output": 10000000,
+        "cacheCreate5m": 2500000,
+        "cacheCreate1h": 4000000,
+        "cacheRead": 200000
+      }
+    },
+    {
+      "canonicalName": "claude-haiku-4-5",
+      "aliases": ["claude-haiku-4.5", "haiku-4.5"],
+      "rates": {
+        "input": 1000000,
+        "output": 5000000,
+        "cacheCreate5m": 1250000,
+        "cacheCreate1h": 2000000,
+        "cacheRead": 100000
       }
     }
   ]
