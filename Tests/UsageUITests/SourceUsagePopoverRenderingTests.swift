@@ -234,10 +234,14 @@ func quotaHistoryRangesRenderEveryLanguage() throws {
         defaults.set(language.rawValue, forKey: L10n.defaultsKey)
         defaults.synchronize()
         for range in UsageLimitHistoryRange.allCases {
+            let bucket = UsageLimitHistoryTimeline.preferredBucket(in:
+                UsageLimitHistoryTimeline.buckets(from: history, source: .codex, range: range, now: Date())
+            )
             let view = UsageLimitHistoryView(
                 history: history,
                 source: .codex,
-                initialRange: range,
+                range: .constant(range),
+                selectedBucketID: .constant(bucket?.id),
                 quotaTokenSummary: quotaTokenRenderFixture(history: history)
             )
             .environment(\.locale, Locale(identifier: language.rawValue))

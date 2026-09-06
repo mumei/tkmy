@@ -58,6 +58,7 @@ struct UsageLimitHistoryChart: View {
     let observations: [UsageLimitSnapshot]
     let range: UsageLimitHistoryRange
     let now: Date
+    var rangeObserver: ((UsageLimitHistoryRange) -> Void)? = nil
 
     var body: some View {
         GeometryReader { _ in
@@ -106,6 +107,8 @@ struct UsageLimitHistoryChart: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(L10n.text("quota_chart_a11y"))
+        .onAppear { rangeObserver?(range) }
+        .onChange(of: range) { _, range in rangeObserver?(range) }
     }
 
     private func drawGrid(in context: inout GraphicsContext, chartRect: CGRect) {

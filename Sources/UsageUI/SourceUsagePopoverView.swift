@@ -34,6 +34,7 @@ public struct SourceUsagePopoverView: View {
     @ObservedObject private var viewModel: SourceUsageViewModel
     private let expectedSource: UsageSource
     private let layoutObserver: ((SourceUsagePopoverLayoutMetrics) -> Void)?
+    private let quotaHistoryChartRangeObserver: ((UsageLimitHistoryRange) -> Void)?
     @State private var hoveredDay: Date?
     @State private var selectedPane: UsagePopoverPane = .usage
     @AppStorage(L10n.defaultsKey) private var languageRawValue = AppLanguage.systemDefault().rawValue
@@ -42,6 +43,7 @@ public struct SourceUsagePopoverView: View {
         self.viewModel = viewModel
         self.expectedSource = viewModel.source
         self.layoutObserver = nil
+        self.quotaHistoryChartRangeObserver = nil
         self._hoveredDay = State(initialValue: nil)
     }
 
@@ -49,11 +51,13 @@ public struct SourceUsagePopoverView: View {
         viewModel: SourceUsageViewModel,
         expectedSource: UsageSource,
         initialPane: UsagePopoverPane = .usage,
-        layoutObserver: ((SourceUsagePopoverLayoutMetrics) -> Void)? = nil
+        layoutObserver: ((SourceUsagePopoverLayoutMetrics) -> Void)? = nil,
+        quotaHistoryChartRangeObserver: ((UsageLimitHistoryRange) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.expectedSource = expectedSource
         self.layoutObserver = layoutObserver
+        self.quotaHistoryChartRangeObserver = quotaHistoryChartRangeObserver
         self._hoveredDay = State(initialValue: nil)
         self._selectedPane = State(initialValue: initialPane)
     }
@@ -136,20 +140,15 @@ public struct SourceUsagePopoverView: View {
             )
         } else {
             switch viewModel.phase {
-            case .loading where viewModel.dailyUsage.isEmpty:
-                loadingView
-            case .loading:
-                loadedContent(notice: nil)
-            case .ready:
-                loadedContent(notice: nil)
-            case let .partialFailure(unreadableFileCount):
-                loadedContent(
-                    notice: unreadableFileCount == 1
-                        ? L10n.text("unreadable_file_one")
-                        : L10n.text("unreadable_files", Int64(unreadableFileCount))
-                )
-            case let .staleSource(warning):
-                loadedContent(notice: warning)
+            case .loading, .ready, .partialFailure, .staleSource:
+                // Keep the loaded subtree's identity stable throughout a refresh.
+                if viewModel.phase == .loading,
+                   viewModel.dailyUsage.isEmpty,
+                   viewModel.usageLimitHistory.isEmpty {
+                    loadingView
+                } else {
+                    loadedContent(notice: refreshNotice)
+                }
             case let .sourceMissing(searchedLocations):
                 sourceMissingView(locations: searchedLocations)
             case let .unavailable(reason):
@@ -160,6 +159,19 @@ public struct SourceUsagePopoverView: View {
                     retry: { Task { await viewModel.refresh() } }
                 )
             }
+        }
+    }
+
+    private var refreshNotice: String? {
+        switch viewModel.phase {
+        case let .partialFailure(unreadableFileCount):
+            unreadableFileCount == 1
+                ? L10n.text("unreadable_file_one")
+                : L10n.text("unreadable_files", Int64(unreadableFileCount))
+        case let .staleSource(warning):
+            warning
+        default:
+            nil
         }
     }
 
@@ -206,7 +218,10 @@ public struct SourceUsagePopoverView: View {
                 UsageLimitHistoryView(
                     history: viewModel.usageLimitHistory,
                     source: .codex,
-                    quotaTokenSummary: viewModel.quotaTokenSummary
+                    range: $viewModel.selectedQuotaHistoryRange,
+                    selectedBucketID: $viewModel.selectedQuotaHistoryBucketID,
+                    quotaTokenSummary: viewModel.quotaTokenSummary,
+                    chartRangeObserver: quotaHistoryChartRangeObserver
                 )
             } else {
                 usageContent(notice: notice)

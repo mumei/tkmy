@@ -16,23 +16,28 @@ struct UsageLimitHistoryView: View {
     let source: UsageSource
     let quotaTokenSummary: QuotaTokenSummary?
     let layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)?
+    let chartRangeObserver: ((UsageLimitHistoryRange) -> Void)?
 
-    @State private var range: UsageLimitHistoryRange
-    @State private var selectedBucketID: String?
+    @Binding private var range: UsageLimitHistoryRange
+    @Binding private var selectedBucketID: String?
     @State private var showsTokenDetails = false
 
     init(
         history: [UsageLimitSnapshot],
         source: UsageSource,
-        initialRange: UsageLimitHistoryRange = .sevenDays,
+        range: Binding<UsageLimitHistoryRange>,
+        selectedBucketID: Binding<String?>,
         quotaTokenSummary: QuotaTokenSummary? = nil,
-        layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)? = nil
+        layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)? = nil,
+        chartRangeObserver: ((UsageLimitHistoryRange) -> Void)? = nil
     ) {
         self.history = history
         self.source = source
         self.quotaTokenSummary = quotaTokenSummary
         self.layoutObserver = layoutObserver
-        _range = State(initialValue: initialRange)
+        self.chartRangeObserver = chartRangeObserver
+        _range = range
+        _selectedBucketID = selectedBucketID
     }
 
     private var now: Date { Date() }
@@ -122,7 +127,12 @@ struct UsageLimitHistoryView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    UsageLimitHistoryChart(observations: chartObservations, range: range, now: now)
+                    UsageLimitHistoryChart(
+                        observations: chartObservations,
+                        range: range,
+                        now: now,
+                        rangeObserver: chartRangeObserver
+                    )
                         .frame(height: 148)
                         .layoutPriority(1)
                         .help(L10n.text("quota_chart_gap_note"))

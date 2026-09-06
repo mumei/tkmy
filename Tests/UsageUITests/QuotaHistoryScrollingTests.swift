@@ -99,10 +99,15 @@ private final class ScrollableQuotaHistoryRender {
         let now = Date()
         let layoutCapture = QuotaHistoryLayoutCapture()
         capture = layoutCapture
+        let history = scrollingQuotaHistoryFixture(now: now)
+        let bucket = UsageLimitHistoryTimeline.preferredBucket(in:
+            UsageLimitHistoryTimeline.buckets(from: history, source: .codex, range: .sevenDays, now: now)
+        )
         let view = UsageLimitHistoryView(
-            history: scrollingQuotaHistoryFixture(now: now),
+            history: history,
             source: .codex,
-            initialRange: .sevenDays,
+            range: .constant(.sevenDays),
+            selectedBucketID: .constant(bucket?.id),
             layoutObserver: { [layoutCapture] metrics in layoutCapture.metrics = metrics }
         )
         .environment(\.locale, Locale(identifier: language.rawValue))

@@ -77,6 +77,9 @@ public final class SourceUsageViewModel: ObservableObject {
     @Published public private(set) var usageLimit: UsageLimitSnapshot?
     @Published public private(set) var usageLimitHistory: [UsageLimitSnapshot]
     @Published public private(set) var quotaTokenSummary: QuotaTokenSummary?
+    // Display selections outlive refresh phases and recreation of the history view.
+    @Published var selectedQuotaHistoryRange: UsageLimitHistoryRange = .sevenDays
+    @Published var selectedQuotaHistoryBucketID: String?
 
     private let calendar: Calendar
     private let loader: SourceUsageLoader?

@@ -4,6 +4,10 @@ The Codex popover's **Quota history** tab shows provider-reported remaining
 percentages as a table and a chart. The initial range is seven days; a menu
 offers 1 hour, 6 hours, 12 hours, 1 day (24 hours), 7 days, and 30 days.
 These are elapsed-time windows, including across daylight-saving changes.
+The selected range and quota window are held by the source view model, so
+automatic refreshes and history-view recreation preserve the selection.
+Refreshing cached history keeps the existing view visible, including when
+there are no token-usage records yet.
 Quota buckets and window durations have independent
 series. This is an account allowance, not a remaining token count.
 
@@ -162,6 +166,9 @@ partial reads, restarts, replacements, and retention. UI tests cover all six
 range boundaries, chart predecessor continuity, locale-aware axes, duration
 formatting, and pace calculations. The full popover and all six quota ranges
 are rendered in every supported language.
+The selection regression hosts the Japanese popover and exercises 6-hour and
+12-hour selections through repeated refresh states and full view recreation,
+both with token records and with quota history alone.
 
 See [SQLite capacity measurements](quota-history-storage.md) for measured
 change-record and evidence sizes, assumptions, and the repeatable harness
