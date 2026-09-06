@@ -7,6 +7,10 @@ import UsageUI
 
 actor UsageCoordinator {
     private static let parserVersion = 2
+    // A negative Codex parser version means the file was parsed through its
+    // cursor but has known gaps. Existing positive v2 cursors remain intact.
+    private static let quotaTokenCoveragePathHash = "quota-token-coverage:v1"
+    private static let quotaTokenCoverageSignature = "quota-token-coverage:v1"
     private static let readChunkSize = 1_048_576
     private static let codexStateLookbackBytes: UInt64 = 4 * 1_048_576
     private let store: SQLiteUsageStore
@@ -34,15 +38,21 @@ actor UsageCoordinator {
     }
 
     private func performLoad(_ source: UsageSource) async throws -> SourceUsageLoadResult {
+        let loadStartedAt = Date()
         let adapter: any UsageSourceAdapter = source == .codex ? codex : claude
         let files = try adapter.discoverLogFiles()
+        let existingCoverageStartedAt = source == .codex
+            ? try await quotaTokenCoverageStartedAt()
+            : nil
         // Retention applies only to the new quota observations, even when no
         // Codex logs have changed or are currently available.
         try await store.pruneUsageLimitHistory(now: Date())
 
         var unreadable = 0
+        let parserVersion = Self.parserVersion
         for file in files {
             do {
+                var fileMalformedLineCount = 0
                 let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
                 let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
                 let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
@@ -51,12 +61,20 @@ actor UsageCoordinator {
                 let pathHash = UsagePathIdentity.sha256(for: file)
                 let signature = try Self.contentSignature(for: file, size: size)
                 let cursor = try await store.cursor(for: source, pathHash: pathHash)
+                let cursorVersionMatches = cursor.map {
+                    Self.cursorVersionMatches(
+                        $0.parserVersion,
+                        expected: parserVersion,
+                        permitsIncomplete: source == .codex
+                    )
+                } ?? false
                 if let cursor,
                    cursor.inode == inode,
                    cursor.size == size,
                    cursor.modifiedAtMilliseconds == modifiedMilliseconds,
                    cursor.contentSignature == signature,
-                   cursor.parserVersion == Self.parserVersion {
+                   cursorVersionMatches {
+                    if cursor.parserVersion == -parserVersion { unreadable += 1 }
                     continue
                 }
 
@@ -65,9 +83,12 @@ actor UsageCoordinator {
                         cursor: $0,
                         inode: inode,
                         currentSize: size,
-                        file: file
+                        file: file,
+                        parserVersion: parserVersion,
+                        permitsIncompleteVersion: source == .codex
                     )
                 } ?? false
+                let priorIncomplete = isAppend && cursor?.parserVersion == -parserVersion
                 let newBytesOffset = isAppend ? min(cursor?.byteOffset ?? 0, size) : 0
                 let parserStart: UInt64
                 if isAppend, source == .codex {
@@ -94,6 +115,7 @@ actor UsageCoordinator {
                 while let chunk = try handle.read(upToCount: Self.readChunkSize), !chunk.isEmpty {
                     let result = parser.consume(chunk, isFinal: false)
                     unreadable += result.malformedLineCount
+                    fileMalformedLineCount += result.malformedLineCount
                     try await store.upsert(result.events)
                     if !result.usageLimits.isEmpty {
                         try await store.upsertUsageLimits(result.usageLimits, now: Date())
@@ -101,6 +123,7 @@ actor UsageCoordinator {
                 }
                 let finalResult = parser.consume(Data(), isFinal: true)
                 unreadable += finalResult.malformedLineCount
+                fileMalformedLineCount += finalResult.malformedLineCount
                 try await store.upsert(finalResult.events)
                 if !finalResult.usageLimits.isEmpty {
                     try await store.upsertUsageLimits(finalResult.usageLimits, now: Date())
@@ -109,6 +132,9 @@ actor UsageCoordinator {
                     size,
                     parserStart + UInt64(finalResult.consumedByteCount)
                 )
+                if priorIncomplete, fileMalformedLineCount == 0 { unreadable += 1 }
+                let incomplete = source == .codex
+                    && (priorIncomplete || fileMalformedLineCount > 0)
                 try await store.saveCursor(
                     FileCursor(
                         inode: inode,
@@ -116,7 +142,10 @@ actor UsageCoordinator {
                         modifiedAtMilliseconds: modifiedMilliseconds,
                         byteOffset: consumedOffset,
                         contentSignature: signature,
-                        parserVersion: Self.parserVersion
+                        // Negative Codex versions preserve known incomplete
+                        // coverage without reparsing a permanently malformed
+                        // file on every refresh. Claude keeps its positive v2.
+                        parserVersion: incomplete ? -parserVersion : parserVersion
                     ),
                     source: source,
                     pathHash: pathHash
@@ -131,19 +160,6 @@ actor UsageCoordinator {
             unreadable += progress.unreadableFiles
         }
 
-        let calendar = Calendar.current
-        let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
-        let from = calendar.date(byAdding: .day, value: -364, to: through) ?? .distantPast
-        let report = try await store.reduceEvents(
-            source: source,
-            from: from,
-            through: through,
-            initial: UsageReportAccumulator(calendar: calendar)
-        ) { report, event in
-            try report.add(event, calculator: calculator)
-        }
-        let daily = report.dailyUsage
-        let dailyByModel = report.dailyModelUsage
         let usageLimit = source == .codex ? codex.latestUsageLimit(in: files) : nil
         if let usageLimit {
             // Save the timestamp reported by Codex, never the refresh time.
@@ -152,8 +168,43 @@ actor UsageCoordinator {
         let refreshedAt = Date()
         let usageLimitHistory = try await store.usageLimitHistory(
             source: source,
-            from: refreshedAt.addingTimeInterval(-30 * 24 * 60 * 60),
+            // A connected predecessor can fall just outside the 30-day chart.
+            from: refreshedAt.addingTimeInterval(
+                -30 * 24 * 60 * 60 - UsageLimitHistoryPolicy.maximumContinuousGap
+            ),
             through: refreshedAt
+        )
+
+        let calendar = Calendar.current
+        let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        let from = calendar.date(byAdding: .day, value: -364, to: through) ?? .distantPast
+        let report = try await store.reduceEvents(
+            source: source,
+            from: from,
+            through: through,
+            initial: UsageLoadAccumulator(
+                calendar: calendar,
+                quotaSource: source == .codex ? source : nil,
+                quotaEndpoints: usageLimitHistory.map(\.observedAt)
+            )
+        ) { report, event in
+            try report.usage.add(event, calculator: calculator)
+            report.quotaTokens?.add(
+                event,
+                attribution: Self.quotaAttribution(for: event, calculator: calculator)
+            )
+        }
+        let daily = report.usage.dailyUsage
+        let dailyByModel = report.usage.dailyModelUsage
+        let coverageStartedAt = try await establishQuotaTokenCoverageIfNeeded(
+            source: source,
+            existing: existingCoverageStartedAt,
+            loadStartedAt: loadStartedAt,
+            hasFiles: !files.isEmpty
+        )
+        let quotaTokenSummary = report.quotaTokens?.summary(
+            isComplete: unreadable == 0 && !files.isEmpty,
+            coverageStartedAt: coverageStartedAt
         )
         let snapshot = SourceUsageSnapshot(
             source: source,
@@ -162,7 +213,8 @@ actor UsageCoordinator {
             refreshedAt: refreshedAt,
             pricingUpdatedAt: Self.parseCatalogDate(calculator.catalog.effectiveDate),
             usageLimit: usageLimit,
-            usageLimitHistory: usageLimitHistory
+            usageLimitHistory: usageLimitHistory,
+            quotaTokenSummary: quotaTokenSummary
         )
         if files.isEmpty {
             return daily.isEmpty && usageLimitHistory.isEmpty
@@ -209,6 +261,76 @@ actor UsageCoordinator {
         return formatter.date(from: value)
     }
 
+    private func quotaTokenCoverageStartedAt() async throws -> Date? {
+        guard let cursor = try await store.cursor(
+            for: .codex,
+            pathHash: Self.quotaTokenCoveragePathHash
+        ),
+        cursor.parserVersion == 1,
+        cursor.contentSignature == Self.quotaTokenCoverageSignature,
+        cursor.modifiedAtMilliseconds > 0
+        else { return nil }
+        return Date(
+            timeIntervalSince1970: Double(cursor.modifiedAtMilliseconds) / 1_000
+        )
+    }
+
+    private func establishQuotaTokenCoverageIfNeeded(
+        source: UsageSource,
+        existing: Date?,
+        loadStartedAt: Date,
+        hasFiles: Bool
+    ) async throws -> Date? {
+        guard source == .codex else { return nil }
+        if let existing { return existing }
+        guard hasFiles else { return nil }
+
+        let milliseconds = Int64(ceil(loadStartedAt.timeIntervalSince1970 * 1_000))
+        let exactDate = Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+        try await store.saveCursor(
+            FileCursor(
+                inode: 0,
+                size: 0,
+                modifiedAtMilliseconds: milliseconds,
+                byteOffset: 0,
+                contentSignature: Self.quotaTokenCoverageSignature,
+                parserVersion: 1
+            ),
+            source: .codex,
+            pathHash: Self.quotaTokenCoveragePathHash
+        )
+        return exactDate
+    }
+
+    private static func cursorVersionMatches(
+        _ stored: Int,
+        expected: Int,
+        permitsIncomplete: Bool
+    ) -> Bool {
+        stored == expected || (permitsIncomplete && stored == -expected)
+    }
+
+    private static func quotaAttribution(
+        for event: NormalizedUsageEvent,
+        calculator: UsagePriceCalculator
+    ) -> QuotaTokenSummary.CodexEventAttribution {
+        guard event.source == .codex,
+              let requestedModel = event.model?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !requestedModel.isEmpty
+        else { return .unknown }
+
+        let normalizedModel = requestedModel.lowercased()
+        if normalizedModel.contains("spark") {
+            // GPT-5.3-Codex-Spark is reported under codex_bengalfox, so its
+            // local events must not be silently charged to the general bucket.
+            return .separateModelQuota
+        }
+        guard let canonical = calculator.catalog.pricing(for: requestedModel)?.canonicalName,
+              canonical.lowercased().hasPrefix("gpt-")
+        else { return .unknown }
+        return .general
+    }
+
     private static func contentSignature(for url: URL, size: UInt64) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -227,13 +349,31 @@ actor UsageCoordinator {
         cursor: FileCursor,
         inode: UInt64,
         currentSize: UInt64,
-        file: URL
+        file: URL,
+        parserVersion: Int,
+        permitsIncompleteVersion: Bool
     ) throws -> Bool {
-        guard cursor.parserVersion == parserVersion,
+        guard cursorVersionMatches(
+                  cursor.parserVersion,
+                  expected: parserVersion,
+                  permitsIncomplete: permitsIncompleteVersion
+              ),
               cursor.inode == inode,
               currentSize >= cursor.size,
               cursor.byteOffset <= cursor.size
         else { return false }
         return try contentSignature(for: file, size: cursor.size) == cursor.contentSignature
+    }
+}
+
+private struct UsageLoadAccumulator: Sendable {
+    var usage: UsageReportAccumulator
+    var quotaTokens: QuotaTokenSummary.Accumulator?
+
+    init(calendar: Calendar, quotaSource: UsageSource?, quotaEndpoints: [Date]) {
+        usage = UsageReportAccumulator(calendar: calendar)
+        quotaTokens = quotaSource.map {
+            QuotaTokenSummary.Accumulator(source: $0, endpoints: quotaEndpoints)
+        }
     }
 }

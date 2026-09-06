@@ -172,10 +172,13 @@ public actor SQLiteUsageStore: UsageEventStore {
         bind(Int64((through.timeIntervalSince1970 * 1_000).rounded()), at: 3, to: statement)
 
         var result = initial
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var resultCode = sqlite3_step(statement)
+        while resultCode == SQLITE_ROW {
             let event = event(from: statement, source: source)
             try update(&result, event)
+            resultCode = sqlite3_step(statement)
         }
+        try ensureQueryCompleted(resultCode)
         return result
     }
 

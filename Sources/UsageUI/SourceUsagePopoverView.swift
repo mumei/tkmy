@@ -203,7 +203,11 @@ public struct SourceUsagePopoverView: View {
     private func loadedContent(notice: String?) -> some View {
         VStack(alignment: .leading, spacing: Layout.contentSpacing) {
             if selectedPane == .quotaHistory, expectedSource == .codex {
-                UsageLimitHistoryView(history: viewModel.usageLimitHistory, source: .codex)
+                UsageLimitHistoryView(
+                    history: viewModel.usageLimitHistory,
+                    source: .codex,
+                    quotaTokenSummary: viewModel.quotaTokenSummary
+                )
             } else {
                 usageContent(notice: notice)
             }

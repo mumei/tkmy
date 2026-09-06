@@ -2,13 +2,30 @@ import Foundation
 import UsageDomain
 
 /// The time range selected in the remaining-quota history pane.
-enum UsageLimitHistoryRange: Int, CaseIterable, Identifiable, Hashable {
-    case sevenDays = 7
-    case thirtyDays = 30
+enum UsageLimitHistoryRange: String, CaseIterable, Identifiable, Hashable {
+    case oneHour = "1h"
+    case sixHours = "6h"
+    case twelveHours = "12h"
+    case oneDay = "1d"
+    case sevenDays = "7d"
+    case thirtyDays = "30d"
 
-    var id: Int { rawValue }
-    var localizationKey: String { self == .sevenDays ? "quota_range_7d" : "quota_range_30d" }
-    var interval: TimeInterval { TimeInterval(rawValue * 24 * 60 * 60) }
+    var id: String { rawValue }
+
+    var localizationKey: String { "quota_range_\(rawValue)" }
+
+    /// These are elapsed seconds, rather than calendar periods. A 24-hour
+    /// range therefore stays 24 hours long across a daylight-saving change.
+    var interval: TimeInterval {
+        switch self {
+        case .oneHour: 60 * 60
+        case .sixHours: 6 * 60 * 60
+        case .twelveHours: 12 * 60 * 60
+        case .oneDay: 24 * 60 * 60
+        case .sevenDays: 7 * 24 * 60 * 60
+        case .thirtyDays: 30 * 24 * 60 * 60
+        }
+    }
 }
 
 struct UsageLimitHistoryBucket: Hashable, Identifiable {
@@ -44,6 +61,49 @@ enum UsageLimitHistoryTimeline {
             .sorted { $0.observedAt < $1.observedAt }
     }
 
+    /// Returns the chart's in-range observations and, when it is demonstrably
+    /// continuous, the one real sample immediately before the selected range.
+    /// The table deliberately uses `observations` instead, so this predecessor
+    /// is never presented as an in-range row.
+    static func chartObservations(
+        from history: [UsageLimitSnapshot],
+        source: UsageSource,
+        bucket: UsageLimitHistoryBucket,
+        range: UsageLimitHistoryRange,
+        now: Date
+    ) -> [UsageLimitSnapshot] {
+        let visible = observations(
+            from: history,
+            source: source,
+            bucket: bucket,
+            range: range,
+            now: now
+        )
+        guard let firstVisible = visible.first else { return [] }
+
+        let cutoff = now.addingTimeInterval(-range.interval)
+        let relevant = history
+            .filter {
+                $0.source == source
+                    && UsageLimitHistoryBucket($0) == bucket
+                    && isFiniteConfirmedRun($0, through: now)
+            }
+            .sorted { lhs, rhs in
+                if lhs.observedAt != rhs.observedAt { return lhs.observedAt < rhs.observedAt }
+                return lhs.lastObservedAt < rhs.lastObservedAt
+            }
+        guard let firstVisibleIndex = relevant.firstIndex(of: firstVisible), firstVisibleIndex > 0 else {
+            return visible
+        }
+
+        let predecessor = relevant[firstVisibleIndex - 1]
+        guard predecessor.lastObservedAt < cutoff,
+              canConnect(predecessor, to: firstVisible) else {
+            return visible
+        }
+        return [predecessor] + visible
+    }
+
     static func buckets(
         from history: [UsageLimitSnapshot],
         source: UsageSource,
@@ -66,7 +126,7 @@ enum UsageLimitHistoryTimeline {
         range: UsageLimitHistoryRange,
         now: Date
     ) -> ClosedRange<Date>? {
-        guard observation.lastObservedAt <= now else { return nil }
+        guard isFiniteConfirmedRun(observation, through: now) else { return nil }
         let cutoff = now.addingTimeInterval(-range.interval)
         let start = max(observation.observedAt, cutoff)
         let end = observation.lastObservedAt
@@ -89,9 +149,7 @@ enum UsageLimitHistoryTimeline {
 
         for observation in observations.sorted(by: { $0.observedAt < $1.observedAt }) {
             guard let previous = result.last?.last,
-                  observation.observedAt.timeIntervalSince(previous.lastObservedAt) <= maximumConnectedGap,
-                  observation.source == previous.source,
-                  UsageLimitHistoryBucket(observation) == UsageLimitHistoryBucket(previous),
+                  canConnectIgnoringLegacyEpochHistory(previous, to: observation),
                   resetState?.canContinue(with: observation) == true,
                   observation.remainingPercent <= previous.remainingPercent else {
                 result.append([observation])
@@ -110,6 +168,37 @@ enum UsageLimitHistoryTimeline {
         now: Date
     ) -> Bool {
         displayedInterval(for: observation, range: range, now: now) != nil
+    }
+
+    private static func isFiniteConfirmedRun(_ observation: UsageLimitSnapshot, through now: Date) -> Bool {
+        observation.observedAt.timeIntervalSinceReferenceDate.isFinite
+            && observation.lastObservedAt.timeIntervalSinceReferenceDate.isFinite
+            && observation.observedAt <= observation.lastObservedAt
+            && observation.lastObservedAt <= now
+    }
+
+    private static func canConnect(_ previous: UsageLimitSnapshot, to candidate: UsageLimitSnapshot) -> Bool {
+        guard canConnectIgnoringLegacyEpochHistory(previous, to: candidate),
+              candidate.remainingPercent <= previous.remainingPercent else { return false }
+
+        if let epochID = previous.resetEpochID { return candidate.resetEpochID == epochID }
+        guard candidate.resetEpochID == nil else { return false }
+        switch (previous.resetsAt, candidate.resetsAt) {
+        case (.none, .none): return true
+        case let (.some(previousReset), .some(candidateReset)):
+            return abs(candidateReset.timeIntervalSince(previousReset)) <= UsageLimitHistoryPolicy.resetJitterTolerance
+        default: return false
+        }
+    }
+
+    private static func canConnectIgnoringLegacyEpochHistory(
+        _ previous: UsageLimitSnapshot,
+        to candidate: UsageLimitSnapshot
+    ) -> Bool {
+        candidate.observedAt.timeIntervalSince(previous.lastObservedAt) <= maximumConnectedGap
+            && candidate.observedAt >= previous.lastObservedAt
+            && candidate.source == previous.source
+            && UsageLimitHistoryBucket(candidate) == UsageLimitHistoryBucket(previous)
     }
 
     private struct SegmentResetState {

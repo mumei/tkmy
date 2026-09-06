@@ -1,8 +1,10 @@
 # Codex quota history
 
 The Codex popover's **Quota history** tab shows provider-reported remaining
-percentages as a table and a chart. The initial range is seven days; users can
-switch to thirty days. Quota buckets and window durations have independent
+percentages as a table and a chart. The initial range is seven days; a menu
+offers 1 hour, 6 hours, 12 hours, 1 day (24 hours), 7 days, and 30 days.
+These are elapsed-time windows, including across daylight-saving changes.
+Quota buckets and window durations have independent
 series. This is an account allowance, not a remaining token count.
 
 History records represent changes in the reported percentage or reset window.
@@ -61,8 +63,9 @@ also backs up the existing app, settings, and database before replacement.
 - Partially read files continue on later refreshes. A quota-only parser caps
   unfinished lines at 1 MiB and skips oversized lines through their newline.
   Restarting inside such a line also skips its suffix.
-- Parsing and storage both enforce retention. The UI loads only the latest
-  thirty days, while older retained records remain in SQLite.
+- Parsing and storage both enforce retention. The UI loads the latest thirty
+  days plus a thirty-minute lookback for a connected chart predecessor, while
+  older retained records remain in SQLite.
 
 Backfill is gradual. There is no additional network polling, API credential
 handling, or requirement to keep a Codex turn active. When local logs do not
@@ -77,10 +80,71 @@ observation is more than thirty minutes after the previous confirmation. The
 one-second reset jitter does not split a confirmed epoch. Missing periods are
 not filled with synthetic zero, 100%, or invented observations.
 
-The table shows the confirmation period, remaining percentage, and reset time.
-A last-confirmed label makes the age of the latest observation visible. The
-7/30-day query includes runs crossing the beginning of the display range.
+The table shows the confirmation period, its readable duration (for example,
+35 minutes or 2 hours 15 minutes), remaining percentage, and reset time. A
+single observation is explicitly labeled rather than presented as a measured
+zero-minute duration. Positive durations under a minute have their own label;
+longer durations use whole elapsed minutes. A last-confirmed label makes the
+age of the latest observation visible.
+
+Short ranges use time labels; the 24-hour range includes dates, and 7/30-day
+ranges use dates. A run crossing the cutoff is visible. When the first visible
+run connects to a real preceding observation, the chart includes that endpoint
+and clips the line to the plot. It does not move the endpoint to the cutoff or
+add a synthetic marker. The outside predecessor is absent from table rows.
 Model-specific allowances never join the general Codex allowance.
+
+## Observed consumption pace
+
+The summary uses the latest continuous segment in the selected range. Its
+actual first and last change timestamps and percentage-point drop determine
+the average elapsed time per 1%. For example, a four-point drop over 135
+minutes gives about 33 minutes per 1%, with the four-point basis shown. A
+constant run's last-confirmed time is used to check continuity, never as the
+timestamp of a future drop. The calculation never extends to the current clock.
+
+Both rate endpoints must be actual observations inside the chosen range. A
+chart boundary cannot create a rate baseline. Resets, recoveries, gaps over
+thirty minutes, conflicting timestamps, reversed order, or insufficient
+observations cannot supply a rate across the break. The latest segment needs
+its own observed decrease; an older segment's rate is not carried forward.
+The result describes account-wide observed elapsed time, not active work time.
+
+The token estimate uses the same endpoints and divides normalized local Codex
+tokens by the observed percentage-point drop. The interval is `(start, end]`:
+events at the initial observation are excluded and all events at the final
+observation are included. The breakdown shows uncached input, cached input,
+and output per 1%. Cached input is counted once; reasoning output is already
+included in output and is not added again. Existing event-key deduplication
+and cumulative-log normalization happen before this aggregation.
+
+This is a comparison with logs on this Mac, not a fixed tokens-to-quota
+conversion. Voice, other devices, and other usage absent from those logs are
+not reconstructed. Only the general `codex` bucket is supported. Known Spark
+events are excluded as a separate quota; an unknown or unrecognized model,
+including `codex-auto-review`, makes the affected interval unavailable.
+Model-specific quota IDs are not guessed from event model names. Missing
+endpoints, no recorded tokens, incomplete ingestion, and arithmetic overflow
+also produce an unavailable result.
+
+No raw token history or new token-estimate table is written. The existing
+ordered token-report scan also collects compact cumulative totals at quota
+change timestamps. Subtracting two points gives the exact observed interval.
+SQLite scan failures throw instead of returning a partial total. A namespaced scanner
+checkpoint records when verifiable token coverage begins. Older imported
+history did not retain malformed-line diagnostics, so token intervals starting
+before that watermark remain unavailable; no full log reimport is forced.
+Once two actual quota changes exist after the watermark, the time and token
+summaries use that shared interval. Before then, older observations can still
+supply the time-only estimate. The watermark never becomes a synthetic quota
+observation.
+
+The token parser remains at version 2. A negative Codex cursor version (`-2`)
+records known incomplete coverage and keeps estimates unavailable on later
+refreshes without repeatedly scanning an unchanged malformed file. Appends
+retain that state; a successful full reparse can clear it. Claude's cursor
+semantics remain unchanged. The coverage watermark is stored in the existing
+cursor table and is cleared by deleting history.
 
 ## Verification
 
@@ -88,9 +152,10 @@ Storage tests cover 365-day boundaries, expiry, reimport rejection, duplicate
 observations, migration backup, out-of-order changes, reset jitter and drift,
 persistence, and preservation of existing token history.
 Importer tests cover work budgets, unchanged files, appends, copied logs,
-partial reads, restarts, replacements, and retention. View-model tests cover
-7/30-day filtering and distinct chart segments. The full popover is rendered
-in every supported language.
+partial reads, restarts, replacements, and retention. UI tests cover all six
+range boundaries, chart predecessor continuity, locale-aware axes, duration
+formatting, and pace calculations. The full popover and all six quota ranges
+are rendered in every supported language.
 
 See [SQLite capacity measurements](quota-history-storage.md) for measured
 change-record and evidence sizes, assumptions, and the repeatable harness

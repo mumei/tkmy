@@ -19,6 +19,7 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
     public let pricingUpdatedAt: Date?
     public let usageLimit: UsageLimitSnapshot?
     public let usageLimitHistory: [UsageLimitSnapshot]
+    public let quotaTokenSummary: QuotaTokenSummary?
 
     public init(
         source: UsageSource,
@@ -27,7 +28,8 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         refreshedAt: Date = Date(),
         pricingUpdatedAt: Date? = nil,
         usageLimit: UsageLimitSnapshot? = nil,
-        usageLimitHistory: [UsageLimitSnapshot] = []
+        usageLimitHistory: [UsageLimitSnapshot] = [],
+        quotaTokenSummary: QuotaTokenSummary? = nil
     ) {
         self.source = source
         self.dailyUsage = dailyUsage
@@ -36,6 +38,7 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         self.pricingUpdatedAt = pricingUpdatedAt
         self.usageLimit = usageLimit
         self.usageLimitHistory = usageLimitHistory
+        self.quotaTokenSummary = quotaTokenSummary
     }
 }
 
@@ -73,6 +76,7 @@ public final class SourceUsageViewModel: ObservableObject {
     @Published public private(set) var pricingUpdatedAt: Date?
     @Published public private(set) var usageLimit: UsageLimitSnapshot?
     @Published public private(set) var usageLimitHistory: [UsageLimitSnapshot]
+    @Published public private(set) var quotaTokenSummary: QuotaTokenSummary?
 
     private let calendar: Calendar
     private let loader: SourceUsageLoader?
@@ -91,6 +95,7 @@ public final class SourceUsageViewModel: ObservableObject {
         self.selectedDay = nil
         self.usageLimit = nil
         self.usageLimitHistory = []
+        self.quotaTokenSummary = nil
     }
 
     public func refresh() async {
@@ -117,6 +122,7 @@ public final class SourceUsageViewModel: ObservableObject {
             selectedDay = nil
             usageLimit = nil
             usageLimitHistory = []
+            quotaTokenSummary = nil
             phase = .sourceMissing(searchedLocations: locations)
         case let .partialFailure(snapshot, unreadableFileCount):
             guard apply(snapshot: snapshot) else { return }
@@ -201,6 +207,9 @@ public final class SourceUsageViewModel: ObservableObject {
         usageLimitHistory = snapshot.usageLimitHistory
             .filter { $0.source == source }
             .sorted { $0.observedAt < $1.observedAt }
+        quotaTokenSummary = snapshot.quotaTokenSummary.flatMap {
+            $0.source == source ? $0 : nil
+        }
 
         if selectedDay == nil {
             selectedDay = calendar.startOfDay(for: Date())

@@ -174,42 +174,15 @@ func quotaHistoryPaneRendersEveryLanguage() throws {
     let now = Date()
     let snapshotDirectory = try makeSnapshotDirectory()
     _ = NSApplication.shared
-    let history: [UsageLimitSnapshot] = (0..<12).map { (index: Int) -> UsageLimitSnapshot in
-        let isGeneral = index.isMultiple(of: 2)
-        let usedPercent = Double(60 - (index * 4))
-        let windowMinutes: Int = isGeneral ? 300 : 10_080
-        let observationOffset: TimeInterval = -TimeInterval(index * 10 * 60)
-        let observedAt: Date
-        let lastObservedAt: Date?
-        switch index {
-        case 0:
-            observedAt = now.addingTimeInterval(-90)
-            lastObservedAt = now.addingTimeInterval(-30)
-        case 2:
-            observedAt = now.addingTimeInterval(-26 * 60 * 60)
-            lastObservedAt = now.addingTimeInterval(-25 * 60 * 60)
-        default:
-            observedAt = now.addingTimeInterval(observationOffset)
-            lastObservedAt = nil
-        }
-        let resetsAt: Date? = now.addingTimeInterval(8_000)
-        return UsageLimitSnapshot(
-            source: .codex,
-            limitID: isGeneral ? "codex" : "gpt-5.6-sol",
-            usedPercent: usedPercent,
-            windowMinutes: windowMinutes,
-            resetsAt: resetsAt,
-            observedAt: observedAt,
-            lastObservedAt: lastObservedAt
-        )
-    }
-    for language in AppLanguage.allCases {
+    let history = quotaHistoryRenderFixture(now: now)
+    for language in quotaRenderLanguages {
         defaults.set(language.rawValue, forKey: L10n.defaultsKey)
         let viewModel = SourceUsageViewModel(source: .codex)
         viewModel.apply(.ready(SourceUsageSnapshot(
             source: .codex,
             dailyUsage: [],
-            usageLimitHistory: history
+            usageLimitHistory: history,
+            quotaTokenSummary: quotaTokenRenderFixture(history: history)
         )))
         let view = SourceUsagePopoverView(
             viewModel: viewModel,
@@ -242,6 +215,78 @@ func quotaHistoryPaneRendersEveryLanguage() throws {
             snapshotContainsVisualVariation(representation),
             "Quota history pane was blank for \(language.rawValue)"
         )
+    }
+}
+
+@Test("Quota history ranges render every supported language")
+func quotaHistoryRangesRenderEveryLanguage() throws {
+    let defaults = UserDefaults.standard
+    let previousLanguage = defaults.object(forKey: L10n.defaultsKey)
+    defer {
+        if let previousLanguage { defaults.set(previousLanguage, forKey: L10n.defaultsKey) }
+        else { defaults.removeObject(forKey: L10n.defaultsKey) }
+    }
+
+    let snapshotDirectory = try makeSnapshotDirectory()
+    let history = quotaHistoryRenderFixture(now: Date())
+    _ = NSApplication.shared
+    for language in quotaRenderLanguages {
+        defaults.set(language.rawValue, forKey: L10n.defaultsKey)
+        defaults.synchronize()
+        for range in UsageLimitHistoryRange.allCases {
+            let view = UsageLimitHistoryView(
+                history: history,
+                source: .codex,
+                initialRange: range,
+                quotaTokenSummary: quotaTokenRenderFixture(history: history)
+            )
+            .environment(\.locale, Locale(identifier: language.rawValue))
+            .environment(\.colorScheme, .dark)
+            .environment(\.dynamicTypeSize, .medium)
+            .padding(16)
+            .background(Color(nsColor: .windowBackgroundColor))
+            let hostingView = NSHostingView(rootView: view)
+            hostingView.frame = NSRect(
+                x: 0,
+                y: 0,
+                width: SourceUsagePopoverSizing.width,
+                height: SourceUsagePopoverSizing.contentHeight(for: [])
+            )
+            hostingView.appearance = NSAppearance(named: .darkAqua)
+            let window = NSWindow(
+                contentRect: hostingView.frame, styleMask: [.borderless], backing: .buffered, defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.contentView = hostingView
+            window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+            window.orderBack(nil)
+            for _ in 0..<5 {
+                hostingView.layoutSubtreeIfNeeded()
+                window.displayIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+            let representation = try #require(
+                hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds),
+                "Could not render quota history for \(language.rawValue), \(range.rawValue)"
+            )
+            hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+            let pngData = try #require(
+                representation.representation(using: .png, properties: [:]),
+                "Could not encode a quota-history PNG for \(language.rawValue), \(range.rawValue)"
+            )
+            try pngData.write(
+                to: snapshotDirectory.appendingPathComponent(
+                    "quota-history-\(language.rawValue)-\(range.rawValue).png"
+                ),
+                options: .atomic
+            )
+            #expect(
+                snapshotContainsVisualVariation(representation),
+                "Quota history was blank for \(language.rawValue), \(range.rawValue)"
+            )
+            window.contentView = nil
+            window.close()
+        }
     }
 }
 
@@ -369,6 +414,60 @@ private func renderPopover(
     return RenderedPopover(metrics: metrics, expectedSize: size, pngData: pngData)
 }
 
+private func quotaHistoryRenderFixture(now: Date) -> [UsageLimitSnapshot] {
+    let day: TimeInterval = 24 * 60 * 60
+    func observation(
+        _ offset: TimeInterval,
+        lastOffset: TimeInterval? = nil,
+        used: Double,
+        epoch: String
+    ) -> UsageLimitSnapshot {
+        UsageLimitSnapshot(
+            source: .codex,
+            limitID: "codex",
+            usedPercent: used,
+            windowMinutes: 300,
+            resetsAt: now.addingTimeInterval(6 * 60 * 60),
+            observedAt: now.addingTimeInterval(offset),
+            lastObservedAt: lastOffset.map { now.addingTimeInterval($0) },
+            resetEpochID: epoch
+        )
+    }
+
+    return [
+        // The chart must clip this real horizontal run at the 30-day boundary.
+        observation(-30 * day - 10 * 60, lastOffset: -30 * day + 10 * 60, used: 5, epoch: "old"),
+        observation(-29 * day, used: 10, epoch: "old"),
+        observation(-28 * day, used: 14, epoch: "old"), // visible long-range gap
+        observation(-12 * 60 * 60, lastOffset: -9 * 60 * 60 - 45 * 60, used: 24, epoch: "old"),
+        observation(-9 * 60 * 60 - 30 * 60, used: 4, epoch: "reset"), // reset break
+        // A continuous recent sequence: 3.857 percentage points in 2h15m.
+        observation(-150 * 60, used: 10, epoch: "recent"),
+        observation(-120 * 60, used: 10.8, epoch: "recent"),
+        observation(-90 * 60, used: 11.6, epoch: "recent"),
+        observation(-60 * 60, used: 12.4, epoch: "recent"),
+        observation(-45 * 60, used: 12.8, epoch: "recent"),
+        observation(-15 * 60, used: 13.857_142_857, epoch: "recent"),
+    ]
+}
+
+private func quotaTokenRenderFixture(history: [UsageLimitSnapshot]) -> QuotaTokenSummary {
+    QuotaTokenSummary(
+        source: .codex,
+        points: history.enumerated().map { index, observation in
+            QuotaTokenSummary.Point(
+                observedAt: observation.observedAt,
+                tokens: TokenBreakdown(
+                    input: Int64(index) * 12_000,
+                    cacheRead: Int64(index) * 60_000,
+                    output: Int64(index) * 1_500
+                )
+            )
+        },
+        isComplete: true
+    )
+}
+
 private func makeModelUsage(count: Int, day: Date, source: UsageSource) -> [DailyModelUsage] {
     let names: [String?] = source == .codex
         ? [
@@ -478,4 +577,12 @@ private func approximatelyIntersects(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
 
 private func renderedModelRowCount(_ frames: [CGRect]) -> Int {
     Set(frames.map { Int(($0.minY * 2).rounded()) }).count
+}
+
+private var quotaRenderLanguages: [AppLanguage] {
+    guard let value = ProcessInfo.processInfo.environment["TKMY_QUOTA_RENDER_LANGUAGES"] else {
+        return AppLanguage.allCases
+    }
+    let requested = Set(value.split(separator: ",").map(String.init))
+    return AppLanguage.allCases.filter { requested.contains($0.rawValue) }
 }
