@@ -19,6 +19,12 @@ public struct UsageLimitSnapshot: Hashable, Identifiable, Sendable {
     public let windowMinutes: Int
     public let resetsAt: Date?
     public let observedAt: Date
+    /// The latest provider-log timestamp that confirmed this value without a
+    /// meaningful change. Raw observations use `observedAt` for both ends.
+    public let lastObservedAt: Date
+    /// Identifies the bounded reset-time epoch assigned by history storage.
+    /// Callers should prefer this over comparing jitter-prone `resetsAt` values.
+    public let resetEpochID: String?
 
     public init(
         source: UsageSource,
@@ -26,7 +32,9 @@ public struct UsageLimitSnapshot: Hashable, Identifiable, Sendable {
         usedPercent: Double,
         windowMinutes: Int,
         resetsAt: Date?,
-        observedAt: Date
+        observedAt: Date,
+        lastObservedAt: Date? = nil,
+        resetEpochID: String? = nil
     ) {
         self.source = source
         self.limitID = limitID
@@ -34,6 +42,8 @@ public struct UsageLimitSnapshot: Hashable, Identifiable, Sendable {
         self.windowMinutes = max(0, windowMinutes)
         self.resetsAt = resetsAt
         self.observedAt = observedAt
+        self.lastObservedAt = max(observedAt, lastObservedAt ?? observedAt)
+        self.resetEpochID = resetEpochID
     }
 
     public var remainingPercent: Double { max(0, 100 - usedPercent) }
@@ -52,6 +62,10 @@ public struct UsageLimitSnapshot: Hashable, Identifiable, Sendable {
 /// Token events and source cursors have independent retention semantics.
 public enum UsageLimitHistoryPolicy {
     public static let retentionInterval: TimeInterval = 365 * 24 * 60 * 60
+    public static let maximumContinuousGap: TimeInterval = 30 * 60
+    public static let resetJitterTolerance: TimeInterval = 1
+    public static let maximumContinuousGapMilliseconds: Int64 = 30 * 60 * 1_000
+    public static let resetJitterToleranceMilliseconds: Int64 = 1_000
 
     public static func cutoff(relativeTo now: Date) -> Date {
         now.addingTimeInterval(-retentionInterval)

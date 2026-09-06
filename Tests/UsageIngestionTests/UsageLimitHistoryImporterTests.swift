@@ -9,7 +9,7 @@ import UsageStore
     defer { fixture.remove() }
     let now = fixture.now
     let files = try (0..<3).map { index in
-        try fixture.log("\(index).jsonl", observations: [now.addingTimeInterval(Double(-index - 1))])
+        try fixture.log("\(index).jsonl", observations: [now.addingTimeInterval(Double(-index - 1))], resetAt: now.addingTimeInterval(3_600))
     }
     let importer = CodexUsageLimitHistoryImporter(store: fixture.store, byteBudget: 80, fileBudget: 1)
     for _ in 0..<30 {
@@ -18,7 +18,7 @@ import UsageStore
         #expect(progress.filesExamined <= 1)
         #expect(progress.unreadableFiles == 0)
     }
-    #expect(try await fixture.history().count == 3)
+    #expect(try await fixture.history().count == 1)
     let finished = try await importer.refresh(files: files, now: now)
     #expect(finished.bytesRead == 0)
 }
@@ -92,6 +92,90 @@ import UsageStore
     #expect(try await fixture.history().count == 1)
 }
 
+@Test func quotaBackfillMergesSameValueAndAdvancesLastObservedAt() async throws {
+    let fixture = try QuotaImportFixture()
+    defer { fixture.remove() }
+    let first = fixture.now.addingTimeInterval(-30)
+    let second = fixture.now.addingTimeInterval(-10)
+    let reset = fixture.now.addingTimeInterval(3_600)
+    let file = try fixture.log("same.jsonl", observations: [first], resetAt: reset)
+    let importer = CodexUsageLimitHistoryImporter(store: fixture.store)
+    _ = try await importer.refresh(files: [file], now: fixture.now)
+    try fixture.append(try quotaLine(at: second, resetAt: reset))
+    _ = try await importer.refresh(files: [file], now: fixture.now)
+    let history = try await fixture.history()
+    #expect(history.count == 1)
+    #expect(history[0].observedAt == first)
+    #expect(history[0].lastObservedAt == second)
+}
+
+@Test func quotaBackfillChangePointsAreDeterministicAcrossOrderAndFiles() async throws {
+    let fixture = try QuotaImportFixture()
+    defer { fixture.remove() }
+    let first = fixture.now.addingTimeInterval(-60)
+    let second = fixture.now.addingTimeInterval(-30)
+    let reset = fixture.now.addingTimeInterval(3_600)
+    let a = try fixture.log("a.jsonl", observations: [first], usedPercent: 17, resetAt: reset)
+    let b = try fixture.log("b.jsonl", observations: [second], usedPercent: 21, resetAt: reset)
+    let importer = CodexUsageLimitHistoryImporter(store: fixture.store)
+    _ = try await importer.refresh(files: [b, a], now: fixture.now)
+    let history = try await fixture.history()
+    #expect(history.count == 2)
+    #expect(history.map(\.observedAt) == [first, second])
+    #expect(history.map(\.usedPercent) == [17, 21])
+}
+
+@Test func quotaBackfillReplayDoesNotCreateOrAdvanceDuplicateChangePoint() async throws {
+    let fixture = try QuotaImportFixture()
+    defer { fixture.remove() }
+    let observation = fixture.now.addingTimeInterval(-10)
+    let file = try fixture.log("replay.jsonl", observations: [observation])
+    let importer = CodexUsageLimitHistoryImporter(store: fixture.store)
+    _ = try await importer.refresh(files: [file], now: fixture.now)
+    let before = try await fixture.history()
+    _ = try await importer.refresh(files: [file], now: fixture.now)
+    let after = try await fixture.history()
+    #expect(after.count == 1)
+    #expect(after[0].lastObservedAt == before[0].lastObservedAt)
+}
+
+@Test func quotaBackfillCreatesChangePointAfterLongGap() async throws {
+    let fixture = try QuotaImportFixture()
+    defer { fixture.remove() }
+    let first = fixture.now.addingTimeInterval(-3_600)
+    let second = fixture.now.addingTimeInterval(-10)
+    let file = try fixture.log("gap.jsonl", observations: [first, second], usedPercent: 17, resetAt: fixture.now.addingTimeInterval(3_600))
+    let importer = CodexUsageLimitHistoryImporter(store: fixture.store)
+    _ = try await importer.refresh(files: [file], now: fixture.now)
+    let history = try await fixture.history()
+    #expect(history.count == 2)
+    #expect(history[0].lastObservedAt == first)
+    #expect(history[1].lastObservedAt == second)
+}
+
+@Test func quotaBackfillRestartMatchesUninterruptedWithCopiedReplay() async throws {
+    let interrupted = try QuotaImportFixture()
+    let uninterrupted = try QuotaImportFixture()
+    defer { interrupted.remove(); uninterrupted.remove() }
+    let t1 = interrupted.now.addingTimeInterval(-120)
+    let t2 = interrupted.now.addingTimeInterval(-100)
+    let reset = interrupted.now.addingTimeInterval(3_600)
+    let lines = [try quotaLine(at: t2, usedPercent: 21, resetAt: reset),
+                 try quotaLine(at: t1, usedPercent: 17, resetAt: reset),
+                 try quotaLine(at: t1.addingTimeInterval(5), usedPercent: 17, resetAt: reset)]
+    let partial = interrupted.directory.appendingPathComponent("partial.jsonl")
+    try lines.reduce(into: Data()) { $0.append($1) }.write(to: partial)
+    let copied = interrupted.directory.appendingPathComponent("copied.jsonl")
+    try FileManager.default.copyItem(at: partial, to: copied)
+    let full = uninterrupted.directory.appendingPathComponent("full.jsonl")
+    try lines.reduce(into: Data()) { $0.append($1) }.write(to: full)
+    let resumed = CodexUsageLimitHistoryImporter(store: interrupted.store, byteBudget: 70)
+    for _ in 0..<40 { _ = try await resumed.refresh(files: [partial, copied], now: interrupted.now) }
+    let complete = CodexUsageLimitHistoryImporter(store: uninterrupted.store)
+    _ = try await complete.refresh(files: [full], now: uninterrupted.now)
+    #expect(try await interrupted.history() == uninterrupted.history())
+}
+
 @Test func quotaBackfillHandlesFileReplacementDuringPartialRead() async throws {
     let fixture = try QuotaImportFixture()
     defer { fixture.remove() }
@@ -116,10 +200,18 @@ private struct QuotaImportFixture {
 
     func remove() { try? FileManager.default.removeItem(at: directory) }
 
-    func log(_ name: String, observations: [Date]) throws -> URL {
+    func log(_ name: String, observations: [Date], usedPercent: Int = 17, resetAt: Date? = nil) throws -> URL {
         let file = directory.appendingPathComponent(name)
-        try observations.reduce(into: Data()) { $0.append(try quotaLine(at: $1)) }.write(to: file)
+        try observations.reduce(into: Data()) { $0.append(try quotaLine(at: $1, usedPercent: usedPercent, resetAt: resetAt)) }.write(to: file)
         return file
+    }
+
+    func append(_ data: Data) throws {
+        let file = directory.appendingPathComponent("same.jsonl")
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+        try handle.close()
     }
 
     func history() async throws -> [UsageLimitSnapshot] {
@@ -127,12 +219,12 @@ private struct QuotaImportFixture {
     }
 }
 
-private func quotaLine(at date: Date) throws -> Data {
+private func quotaLine(at date: Date, usedPercent: Int = 17, resetAt: Date? = nil) throws -> Data {
     let object: [String: Any] = [
         "type": "event_msg", "timestamp": date.timeIntervalSince1970,
         "payload": ["type": "token_count", "info": NSNull(), "rate_limits": [
-            "limit_id": "codex", "primary": ["used_percent": 17, "window_minutes": 10_080,
-                                              "resets_at": date.timeIntervalSince1970 + 500]
+            "limit_id": "codex", "primary": ["used_percent": usedPercent, "window_minutes": 10_080,
+                                              "resets_at": (resetAt ?? date.addingTimeInterval(500)).timeIntervalSince1970]
         ]]
     ]
     var data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])

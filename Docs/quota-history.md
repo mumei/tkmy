@@ -5,17 +5,50 @@ percentages as a table and a chart. The initial range is seven days; users can
 switch to thirty days. Quota buckets and window durations have independent
 series. This is an account allowance, not a remaining token count.
 
-Observations retain their original JSONL event timestamps. A repeated refresh
-does not create a new observation from an old value. Identical observations
-copied between logs are deduplicated; genuinely different observation times
-remain separate even when the percentage has not changed.
+History records represent changes in the reported percentage or reset window.
+The first observation of each bucket is saved. Further observations with the
+same value update that record's last-confirmed time, rather than adding table
+rows. Both endpoints are actual JSONL timestamps: reading an old value again
+never advances its confirmation time to the app's refresh time.
+
+An observation after a gap longer than thirty minutes starts a new record even
+if its value is unchanged. This distinguishes a steady value with continuing
+observations from a period in which nothing was reported.
+
+Reset timestamps may fluctuate by one second. A reset epoch admits timestamps
+only while its entire minimum-to-maximum spread stays within one second;
+successive one-second steps cannot drift indefinitely into the same epoch.
+Percentage changes do not reset that tolerance. A larger reset change or a
+transition between reported and unreported reset times starts a new epoch.
+The percentage itself is compared at the provider's stored precision.
+
+## Storage and migration
+
+Schema 4 stores compact change records in `usage_limit_samples`, with the
+first and last confirmation timestamps and an explicit reset-epoch identity.
+The observations needed to reconcile out-of-order logs are packed into
+`usage_limit_evidence_pages`, grouped by bucket and UTC day. These pages retain
+timestamp and value evidence without allocating a full indexed history row
+for each unchanged observation. They are included in capacity measurements.
+
+Keeping that evidence matters: a late observation can reveal a changed value
+inside a previously constant run. The store can reconstruct the real change
+and recovery points instead of losing them or inventing their times. Duplicate
+observations copied between files do not add evidence or advance confirmation
+times. Same-time conflicting values retain a deterministic ordering.
+
+Before migrating a schema-3 database, the store creates a consistent SQLite
+backup beside it. If the backup fails, migration stops. The quota conversion is
+transactional; token events and file cursors are preserved. Local installation
+also backs up the existing app, settings, and database before replacement.
 
 ## Retention and ingestion
 
-- `usage_limit_samples` retains a rolling 365 × 24 hours, including the cutoff.
-  Expired samples are deleted on refresh, including refreshes without logs.
-  Inserts independently reject expired and future observations, so old logs
-  cannot resurrect deleted history.
+- Change records and packed confirmation evidence retain a rolling
+  365 × 24 hours, including the cutoff. Expired evidence is deleted on refresh,
+  including refreshes without logs. A run crossing the cutoff starts at its
+  first remaining actual observation. Inserts independently reject expired
+  and future observations, so old logs cannot resurrect deleted history.
 - Existing token events and their file cursors keep their existing behavior.
   The explicit **delete history** operation clears both kinds of history.
 - New token-count events feed quota observations into the same refresh flow.
@@ -37,22 +70,28 @@ record an observation, the app cannot reconstruct that missing value.
 
 ## Display
 
-The chart plots observed values on a fixed 0–100% scale. Lines are split when
-the quota bucket/window changes, the reported reset time changes, remaining
-allowance rises, or observations are more than thirty minutes apart. Missing
-periods are not filled with synthetic zero, 100%, or interpolated samples.
-The table retains the observation time, remaining percentage, and the reset
-time reported for that observation. Model-specific allowances never join the
-general Codex allowance.
+The chart plots confirmed runs on a fixed 0–100% scale, extending each constant
+run only to its last actual confirmation. Lines are split when the quota
+bucket/window or reset epoch changes, remaining allowance rises, or the next
+observation is more than thirty minutes after the previous confirmation. The
+one-second reset jitter does not split a confirmed epoch. Missing periods are
+not filled with synthetic zero, 100%, or invented observations.
+
+The table shows the confirmation period, remaining percentage, and reset time.
+A last-confirmed label makes the age of the latest observation visible. The
+7/30-day query includes runs crossing the beginning of the display range.
+Model-specific allowances never join the general Codex allowance.
 
 ## Verification
 
 Storage tests cover 365-day boundaries, expiry, reimport rejection, duplicate
-observations, persistence, and preservation of existing token history.
+observations, migration backup, out-of-order changes, reset jitter and drift,
+persistence, and preservation of existing token history.
 Importer tests cover work budgets, unchanged files, appends, copied logs,
 partial reads, restarts, replacements, and retention. View-model tests cover
 7/30-day filtering and distinct chart segments. The full popover is rendered
 in every supported language.
 
-See [SQLite capacity measurements](quota-history-storage.md) for measured row
-and index sizes, rate assumptions, and the repeatable synthetic-data harness.
+See [SQLite capacity measurements](quota-history-storage.md) for measured
+change-record and evidence sizes, assumptions, and the repeatable harness
+that executes the actual Swift migration on a disposable database.

@@ -36,6 +36,9 @@ struct UsageLimitHistoryView: View {
             now: now
         )
     }
+    private var lastConfirmedAt: Date? {
+        observations.map(\.lastObservedAt).filter { $0 <= now }.max()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -83,6 +86,11 @@ struct UsageLimitHistoryView: View {
                     Text(L10n.text("quota_chart_gap_note"))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if let lastConfirmedAt {
+                        Text(L10n.text("quota_last_confirmed", timestamp(lastConfirmedAt)))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     observationTable
                 }
             }
@@ -96,7 +104,7 @@ struct UsageLimitHistoryView: View {
     private var observationTable: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(L10n.text("quota_observed"))
+                Text(L10n.text("quota_confirmation_period"))
                 Spacer()
                 Text(L10n.text("quota_remaining"))
                 Text(L10n.text("quota_next_reset"))
@@ -109,7 +117,7 @@ struct UsageLimitHistoryView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(observations.reversed()) { observation in
                         HStack {
-                            Text(observation.observedAt, format: .dateTime.month().day().hour().minute().second().locale(L10n.locale))
+                            Text(confirmationPeriod(observation))
                                 .monospacedDigit()
                             Spacer()
                             Text(percentage(observation.remainingPercent))
@@ -145,6 +153,16 @@ struct UsageLimitHistoryView: View {
     private func resetText(_ reset: Date?) -> String {
         guard let reset else { return L10n.text("quota_reset_unknown") }
         return reset.formatted(.dateTime.month().day().hour().minute().second().locale(L10n.locale))
+    }
+
+    private func confirmationPeriod(_ observation: UsageLimitSnapshot) -> String {
+        let start = timestamp(observation.observedAt)
+        let end = timestamp(observation.lastObservedAt)
+        return observation.observedAt == observation.lastObservedAt ? start : "\(start)–\(end)"
+    }
+
+    private func timestamp(_ date: Date) -> String {
+        date.formatted(.dateTime.month().day().hour().minute().second().locale(L10n.locale))
     }
 
     private func readableLimitID(_ limitID: String) -> String {
@@ -197,20 +215,37 @@ private struct UsageLimitHistoryChart: View {
                 }
                 for segment in segments where !segment.isEmpty {
                     var path = Path()
-                    for (index, observation) in segment.enumerated() {
-                        let point = CGPoint(
-                            x: xPosition(observation.observedAt, cutoff: cutoff, now: now, in: chartRect),
+                    var hasPoint = false
+                    for observation in segment {
+                        guard let interval = UsageLimitHistoryTimeline.displayedInterval(
+                            for: observation,
+                            range: range,
+                            now: now
+                        ) else { continue }
+                        let start = CGPoint(
+                            x: xPosition(interval.lowerBound, cutoff: cutoff, now: now, in: chartRect),
                             y: yPosition(observation.remainingPercent, in: chartRect)
                         )
-                        if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                        let end = CGPoint(
+                            x: xPosition(interval.upperBound, cutoff: cutoff, now: now, in: chartRect),
+                            y: yPosition(observation.remainingPercent, in: chartRect)
+                        )
+                        if hasPoint { path.addLine(to: start) } else {
+                            path.move(to: start)
+                            hasPoint = true
+                        }
+                        path.addLine(to: end)
                     }
                     context.stroke(path, with: .color(.accentColor), lineWidth: 2)
                     for observation in segment {
-                        let point = CGPoint(
-                            x: xPosition(observation.observedAt, cutoff: cutoff, now: now, in: chartRect),
-                            y: yPosition(observation.remainingPercent, in: chartRect)
-                        )
-                        context.fill(Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)), with: .color(.accentColor))
+                        guard let interval = UsageLimitHistoryTimeline.displayedInterval(for: observation, range: range, now: now) else { continue }
+                        for date in [interval.lowerBound, interval.upperBound] {
+                            let point = CGPoint(
+                                x: xPosition(date, cutoff: cutoff, now: now, in: chartRect),
+                                y: yPosition(observation.remainingPercent, in: chartRect)
+                            )
+                            context.fill(Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)), with: .color(.accentColor))
+                        }
                     }
                 }
                 let middle = cutoff.addingTimeInterval(range.interval / 2)

@@ -26,7 +26,7 @@ struct UsageLimitHistoryBucket: Hashable, Identifiable {
 enum UsageLimitHistoryTimeline {
     /// A provider sample gap beyond 30 minutes means its intervening values are
     /// unknown, so the chart deliberately leaves a visible break.
-    static let maximumConnectedGap: TimeInterval = 30 * 60
+    static let maximumConnectedGap = UsageLimitHistoryPolicy.maximumContinuousGap
 
     static func observations(
         from history: [UsageLimitSnapshot],
@@ -35,13 +35,11 @@ enum UsageLimitHistoryTimeline {
         range: UsageLimitHistoryRange,
         now: Date
     ) -> [UsageLimitSnapshot] {
-        let cutoff = now.addingTimeInterval(-range.interval)
         return history
             .filter {
                 $0.source == source
                     && UsageLimitHistoryBucket($0) == bucket
-                    && $0.observedAt >= cutoff
-                    && $0.observedAt <= now
+                    && intersectsDisplayedRange($0, range: range, now: now)
             }
             .sorted { $0.observedAt < $1.observedAt }
     }
@@ -52,17 +50,28 @@ enum UsageLimitHistoryTimeline {
         range: UsageLimitHistoryRange,
         now: Date
     ) -> [UsageLimitHistoryBucket] {
-        let cutoff = now.addingTimeInterval(-range.interval)
         return Array(Set(history.compactMap { observation in
             guard observation.source == source,
-                  observation.observedAt >= cutoff,
-                  observation.observedAt <= now else { return nil }
+                  intersectsDisplayedRange(observation, range: range, now: now) else { return nil }
             return UsageLimitHistoryBucket(observation)
         }))
         .sorted { lhs, rhs in
             if lhs.windowMinutes != rhs.windowMinutes { return lhs.windowMinutes < rhs.windowMinutes }
             return lhs.limitID.localizedStandardCompare(rhs.limitID) == .orderedAscending
         }
+    }
+
+    static func displayedInterval(
+        for observation: UsageLimitSnapshot,
+        range: UsageLimitHistoryRange,
+        now: Date
+    ) -> ClosedRange<Date>? {
+        guard observation.lastObservedAt <= now else { return nil }
+        let cutoff = now.addingTimeInterval(-range.interval)
+        let start = max(observation.observedAt, cutoff)
+        let end = observation.lastObservedAt
+        guard start <= end else { return nil }
+        return start...end
     }
 
     static func preferredBucket(in buckets: [UsageLimitHistoryBucket]) -> UsageLimitHistoryBucket? {
@@ -75,17 +84,60 @@ enum UsageLimitHistoryTimeline {
     }
 
     static func segments(_ observations: [UsageLimitSnapshot]) -> [[UsageLimitSnapshot]] {
-        observations.sorted { $0.observedAt < $1.observedAt }.reduce(into: []) { result, observation in
+        var result: [[UsageLimitSnapshot]] = []
+        var resetState: SegmentResetState?
+
+        for observation in observations.sorted(by: { $0.observedAt < $1.observedAt }) {
             guard let previous = result.last?.last,
-                  observation.observedAt.timeIntervalSince(previous.observedAt) <= maximumConnectedGap,
+                  observation.observedAt.timeIntervalSince(previous.lastObservedAt) <= maximumConnectedGap,
                   observation.source == previous.source,
                   UsageLimitHistoryBucket(observation) == UsageLimitHistoryBucket(previous),
-                  observation.resetsAt == previous.resetsAt,
+                  resetState?.canContinue(with: observation) == true,
                   observation.remainingPercent <= previous.remainingPercent else {
                 result.append([observation])
-                return
+                resetState = SegmentResetState(observation)
+                continue
             }
             result[result.count - 1].append(observation)
+            resetState?.append(observation)
+        }
+        return result
+    }
+
+    private static func intersectsDisplayedRange(
+        _ observation: UsageLimitSnapshot,
+        range: UsageLimitHistoryRange,
+        now: Date
+    ) -> Bool {
+        displayedInterval(for: observation, range: range, now: now) != nil
+    }
+
+    private struct SegmentResetState {
+        let epochID: String?
+        var earliestLegacyReset: Date?
+        var latestLegacyReset: Date?
+
+        init(_ observation: UsageLimitSnapshot) {
+            epochID = observation.resetEpochID
+            earliestLegacyReset = observation.resetEpochID == nil ? observation.resetsAt : nil
+            latestLegacyReset = earliestLegacyReset
+        }
+
+        func canContinue(with candidate: UsageLimitSnapshot) -> Bool {
+            if let epochID { return candidate.resetEpochID == epochID }
+            guard candidate.resetEpochID == nil else { return false }
+            switch (earliestLegacyReset, latestLegacyReset, candidate.resetsAt) {
+            case (.none, .none, .none): return true
+            case let (.some(earliest), .some(latest), .some(reset)):
+                return max(latest, reset).timeIntervalSince(min(earliest, reset)) <= UsageLimitHistoryPolicy.resetJitterTolerance
+            default: return false
+            }
+        }
+
+        mutating func append(_ observation: UsageLimitSnapshot) {
+            guard epochID == nil, let reset = observation.resetsAt else { return }
+            earliestLegacyReset = earliestLegacyReset.map { min($0, reset) } ?? reset
+            latestLegacyReset = latestLegacyReset.map { max($0, reset) } ?? reset
         }
     }
 }

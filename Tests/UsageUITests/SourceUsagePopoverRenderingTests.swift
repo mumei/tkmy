@@ -179,6 +179,19 @@ func quotaHistoryPaneRendersEveryLanguage() throws {
         let usedPercent = Double(60 - (index * 4))
         let windowMinutes: Int = isGeneral ? 300 : 10_080
         let observationOffset: TimeInterval = -TimeInterval(index * 10 * 60)
+        let observedAt: Date
+        let lastObservedAt: Date?
+        switch index {
+        case 0:
+            observedAt = now.addingTimeInterval(-90)
+            lastObservedAt = now.addingTimeInterval(-30)
+        case 2:
+            observedAt = now.addingTimeInterval(-26 * 60 * 60)
+            lastObservedAt = now.addingTimeInterval(-25 * 60 * 60)
+        default:
+            observedAt = now.addingTimeInterval(observationOffset)
+            lastObservedAt = nil
+        }
         let resetsAt: Date? = now.addingTimeInterval(8_000)
         return UsageLimitSnapshot(
             source: .codex,
@@ -186,7 +199,8 @@ func quotaHistoryPaneRendersEveryLanguage() throws {
             usedPercent: usedPercent,
             windowMinutes: windowMinutes,
             resetsAt: resetsAt,
-            observedAt: now.addingTimeInterval(observationOffset)
+            observedAt: observedAt,
+            lastObservedAt: lastObservedAt
         )
     }
     for language in AppLanguage.allCases {

@@ -1,58 +1,81 @@
-# Quota history storage measurement
+# Quota history storage measurements
 
-Measured on 2026-09-07 with the production `usage_limit_samples` schema from
-`SQLiteUsageStore`: its composite primary-key index, the
-`(source, observed_at_ms)` history index, and the `observed_at_ms` cleanup
-index. The measurement used SQLite `dbstat`, a 4 KiB page size, and 100,000
-synthetic Codex samples. Samples alternate `codex` and `codex_bengalfox`, use
-millisecond timestamps spaced one minute apart, 5-hour and weekly reset times,
-and percentage values from 0 through 100. It does not run `VACUUM`, matching
-normal production operation.
+Schema 4 stores one history row for the first observation, a percentage/reset
+change, or a restart after a gap longer than thirty minutes. Repeated equal
+values update the last-confirmed time. Exact observation evidence is packed
+into UTC-day pages so late logs can reconstruct changes inside an existing
+run without losing information.
 
-Run it again with:
+The measurements below include **both change rows and packed evidence, plus
+all their SQLite indexes**. They compare allocated quota pages using SQLite
+`dbstat` with a 4 KiB page size. Token-history tables, backup files, reusable
+free pages, and temporary WAL growth are excluded. No `VACUUM` is run.
+
+## Results
+
+Measured on 2026-09-07 by running the actual Swift schema-3-to-4 migration and
+then replaying the input in reverse order. Both replays produced identical
+history records and last-confirmed timestamps.
+
+| Input | Observations | Change rows | Old quota allocation | New quota allocation | Reduction |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Synthetic, 100 confirmations per percentage change | 100,000 | 1,000 | 13,336,576 B | 2,322,432 B | 82.6% |
+| Read-only copy of local quota history | 1,501 | 53 | 204,800 B | 57,344 B | 72.0% |
+
+The synthetic input has two independent Codex quota buckets, six seconds
+between observations in each bucket, 5-hour/weekly reset periods, and a
+one-second reset-time fluctuation every seventeenth observation. Percentages
+change after every hundred confirmations and cycle through 0–100. All
+observations lie within the retention window.
+
+For the synthetic input, the new allocation consists of:
+
+| Object | Allocated bytes |
+| --- | ---: |
+| Packed confirmation evidence | 2,109,440 |
+| Change records | 131,072 |
+| Source/time index | 40,960 |
+| Last-confirmed index | 40,960 |
+| **Total** | **2,322,432** |
+
+The local-copy check independently decoded every packed evidence page and
+recovered all 1,501 original observations exactly. All 833,377 existing token
+event keys were retained, the token event count was unchanged, source cursors
+were unchanged, and SQLite `integrity_check` returned `ok`.
+
+These reductions depend on how often values change. A stream whose percentage
+changes at every observation cannot collapse into fewer history rows and may
+use more space than the old schema because it also retains ordering evidence.
+The packed evidence itself still grows with distinct observations. Repeated
+reads of the identical observation add neither evidence nor history rows.
+
+## Reproduce
+
+Run from the repository root. The script creates a disposable schema-3
+database, invokes an opt-in Swift integration test, and reports the allocation
+of the migrated database. It never migrates the installed app's database.
 
 ```sh
-rtk python3 Scripts/measure-quota-storage.py
+rtk proxy python3 Scripts/measure-quota-storage.py \
+  --rows 100000 --confirmations-per-change 100
 ```
 
-The measured 100,000-row database was 13,373,440 bytes, or **133.7344 bytes
-per stored sample**. `dbstat` accounted for every database page.
+To retain the report, test log, migration backup, and verification fixture,
+pass `--output-directory` with a directory that does not already exist.
+To measure existing schema-3 data, pass `--source-database /path/to/usage.sqlite3`;
+the script opens it read-only and migrates an online-backup copy. This option
+requires schema 3 and is intended for migration verification.
 
-| SQLite object | Bytes | Bytes/sample |
-| --- | ---: | ---: |
-| `usage_limit_samples` table | 4,317,184 | 43.1718 |
-| Composite primary-key index | 4,988,928 | 49.8893 |
-| `idx_usage_limit_source_observed` | 2,375,680 | 23.7568 |
-| `idx_usage_limit_observed` | 1,687,552 | 16.8755 |
-| Schema page | 4,096 | 0.0410 |
+## Retention and physical file size
 
-The harness inserts the same 100,000 records twice with `INSERT OR IGNORE`.
-The second insert added zero rows and zero database pages.
+Both change records and evidence enforce the rolling 365-day cutoff. Evidence
+within the boundary UTC day is filtered by its actual timestamp; retaining a
+whole day cannot reintroduce expired observations. A run crossing the cutoff
+is rebuilt from its first retained confirmation. No-refresh-time observations
+are synthesized.
 
-前提は24時間連続で観測する場合です。行数は
-`days × 1,440 × windows × samples/min` で求めます。既存アプリの60秒タイマーは
-ログに変化がない限り観測を増やしません。一方、新しい `token_count` イベントは
-1分あたり1件を超えることがあるため、10件/分も併記しています。
-
-Projected storage applies the measured 133.7344 bytes/sample to retained
-distinct observations. Repeated reads of an identical observation are
-deduplicated; different timestamps are retained, including busy observations
-that arrive ten times per minute.
-
-| Retention | Windows | Observations/min/window | Samples | Estimated database size |
-| --- | ---: | ---: | ---: | ---: |
-| 30 days | 1 | 1 | 43,200 | 5.51 MiB |
-| 30 days | 3 | 1 | 129,600 | 16.53 MiB |
-| 365 days | 1 | 1 | 525,600 | 67.03 MiB |
-| 365 days | 3 | 1 | 1,576,800 | 201.10 MiB |
-| 30 days | 1 | 10 | 432,000 | 55.10 MiB |
-| 30 days | 3 | 10 | 1,296,000 | 165.29 MiB |
-| 365 days | 1 | 10 | 5,256,000 | 670.35 MiB |
-| 365 days | 3 | 10 | 15,768,000 | 1.96 GiB |
-
-The application uses WAL mode. The figures above describe the checkpointed
-main database; the `-wal` file can temporarily add disk use while writes have
-not yet checkpointed. Deleting expired rows normally makes SQLite pages
-available for reuse, so the file may remain near a previous high-water size
-instead of shrinking immediately. `VACUUM` reclaims that space, but is not
-needed for bounded row retention.
+Deletion and migration normally free SQLite pages for reuse. The main database
+file can therefore remain near its previous size even when the quota tables
+occupy fewer pages. WAL files and the deliberately retained migration/app
+backups consume additional space. The percentages above describe active quota
+storage, not an immediate reduction in the total Application Support folder.

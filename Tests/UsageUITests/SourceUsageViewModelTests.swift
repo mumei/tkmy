@@ -135,7 +135,7 @@ import UsageDomain
     #expect(viewModel.phase == .unavailable(reason: L10n.text("source_mismatch")))
 }
 
-@Test func quotaHistoryFiltersActualDateRangeAndNeverFutureObservations() {
+@Test func quotaHistoryFiltersActualDateRangeAndNeverFutureObservations() throws {
     let now = Date(timeIntervalSince1970: 1_760_000_000)
     let bucket = UsageLimitHistoryBucket(quota(observedAt: now))
     let history = [
@@ -144,16 +144,27 @@ import UsageDomain
         quota(observedAt: now.addingTimeInterval(-60)),
         quota(observedAt: now.addingTimeInterval(1)),
     ]
+    let crossingRun = quota(
+        observedAt: now.addingTimeInterval(-(7 * 24 * 60 * 60) - 60),
+        lastObservedAt: now.addingTimeInterval(-(7 * 24 * 60 * 60) + 60)
+    )
+    let futureConfirmation = quota(
+        observedAt: now.addingTimeInterval(-60),
+        lastObservedAt: now.addingTimeInterval(1)
+    )
 
     let filtered = UsageLimitHistoryTimeline.observations(
-        from: history,
+        from: [crossingRun] + history + [futureConfirmation],
         source: .codex,
         bucket: bucket,
         range: .sevenDays,
         now: now
     )
 
-    #expect(filtered.map(\.observedAt) == [history[0].observedAt, history[2].observedAt])
+    #expect(filtered.map(\.observedAt) == [crossingRun.observedAt, history[0].observedAt, history[2].observedAt])
+    let interval = try #require(UsageLimitHistoryTimeline.displayedInterval(for: crossingRun, range: .sevenDays, now: now))
+    #expect(interval.lowerBound == now.addingTimeInterval(-(7 * 24 * 60 * 60)))
+    #expect(UsageLimitHistoryTimeline.displayedInterval(for: futureConfirmation, range: .sevenDays, now: now) == nil)
 }
 
 @Test func quotaHistorySeparatesSourcesBucketsAndWindows() {
@@ -191,6 +202,43 @@ import UsageDomain
     #expect(UsageLimitHistoryTimeline.segments(observations).map(\.count) == [2, 1, 1, 1])
 }
 
+@Test func quotaHistoryUsesEpochIDsAndOnlyToleratesOneSecondForLegacyResetTimes() {
+    let origin = Date(timeIntervalSince1970: 1_760_000_000)
+    let reset = origin.addingTimeInterval(10_000)
+    let observations = [
+        quota(observedAt: origin, resetsAt: reset, resetEpochID: "epoch-a"),
+        quota(observedAt: origin.addingTimeInterval(60), resetsAt: reset.addingTimeInterval(10), resetEpochID: "epoch-a"),
+        quota(observedAt: origin.addingTimeInterval(120), resetsAt: reset.addingTimeInterval(11), resetEpochID: "epoch-b"),
+        quota(observedAt: origin.addingTimeInterval(180), resetsAt: reset.addingTimeInterval(12)),
+        quota(observedAt: origin.addingTimeInterval(240), resetsAt: reset.addingTimeInterval(13)),
+        quota(observedAt: origin.addingTimeInterval(300), resetsAt: reset.addingTimeInterval(15)),
+    ]
+
+    #expect(UsageLimitHistoryTimeline.segments(observations).map(\.count) == [2, 1, 2, 1])
+}
+
+@Test func legacyResetJitterCannotDriftAcrossAnEntireSegment() {
+    let origin = Date(timeIntervalSince1970: 1_760_000_000)
+    let observations = [
+        quota(observedAt: origin, resetsAt: origin.addingTimeInterval(54)),
+        quota(observedAt: origin.addingTimeInterval(60), resetsAt: origin.addingTimeInterval(55)),
+        quota(observedAt: origin.addingTimeInterval(120), resetsAt: origin.addingTimeInterval(56)),
+    ]
+
+    #expect(UsageLimitHistoryTimeline.segments(observations).map(\.count) == [2, 1])
+}
+
+@Test func quotaHistoryUsesRunEndForGapDetection() {
+    let origin = Date(timeIntervalSince1970: 1_760_000_000)
+    let observations = [
+        quota(observedAt: origin, lastObservedAt: origin.addingTimeInterval(29 * 60)),
+        quota(observedAt: origin.addingTimeInterval(59 * 60)),
+        quota(observedAt: origin.addingTimeInterval(89 * 60 + 1)),
+    ]
+
+    #expect(UsageLimitHistoryTimeline.segments(observations).map(\.count) == [2, 1])
+}
+
 @Test func quotaHistoryHasEmptyStateForAbsentOrOutOfPeriodObservations() {
     let now = Date(timeIntervalSince1970: 1_760_000_000)
     let old = quota(observedAt: now.addingTimeInterval(-(31 * 24 * 60 * 60)))
@@ -203,7 +251,9 @@ private func quota(
     limitID: String = "codex",
     windowMinutes: Int = 300,
     observedAt: Date = Date(timeIntervalSince1970: 1_760_000_000),
+    lastObservedAt: Date? = nil,
     resetsAt: Date? = nil,
+    resetEpochID: String? = nil,
     remaining: Double = 80
 ) -> UsageLimitSnapshot {
     UsageLimitSnapshot(
@@ -212,7 +262,9 @@ private func quota(
         usedPercent: 100 - remaining,
         windowMinutes: windowMinutes,
         resetsAt: resetsAt,
-        observedAt: observedAt
+        observedAt: observedAt,
+        lastObservedAt: lastObservedAt,
+        resetEpochID: resetEpochID
     )
 }
 
