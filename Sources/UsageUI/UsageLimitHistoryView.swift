@@ -15,19 +15,23 @@ struct UsageLimitHistoryView: View {
     let history: [UsageLimitSnapshot]
     let source: UsageSource
     let quotaTokenSummary: QuotaTokenSummary?
+    let layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)?
 
     @State private var range: UsageLimitHistoryRange
     @State private var selectedBucketID: String?
+    @State private var showsTokenDetails = false
 
     init(
         history: [UsageLimitSnapshot],
         source: UsageSource,
         initialRange: UsageLimitHistoryRange = .sevenDays,
-        quotaTokenSummary: QuotaTokenSummary? = nil
+        quotaTokenSummary: QuotaTokenSummary? = nil,
+        layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)? = nil
     ) {
         self.history = history
         self.source = source
         self.quotaTokenSummary = quotaTokenSummary
+        self.layoutObserver = layoutObserver
         _range = State(initialValue: initialRange)
     }
 
@@ -76,7 +80,7 @@ struct UsageLimitHistoryView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(L10n.text("remaining_quota_history"))
                     .font(.headline)
@@ -90,6 +94,7 @@ struct UsageLimitHistoryView: View {
                 .frame(width: 132)
                 .labelsHidden()
                 .accessibilityLabel(L10n.text("quota_period"))
+                .reportQuotaFrame(.rangePicker)
             }
 
             if buckets.isEmpty {
@@ -108,6 +113,7 @@ struct UsageLimitHistoryView: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .reportQuotaFrame(.windowPicker)
                 if observations.isEmpty {
                     ContentUnavailableView(
                         L10n.text("quota_history_empty_title"),
@@ -116,93 +122,93 @@ struct UsageLimitHistoryView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
-                            UsageLimitHistoryChart(observations: chartObservations, range: range, now: now)
-                                .frame(height: 148)
-                            Text(L10n.text("quota_chart_gap_note"))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            paceSummary
-                            if let lastConfirmedAt {
-                                Text(L10n.text("quota_last_confirmed", timestamp(lastConfirmedAt)))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            observationTable
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    UsageLimitHistoryChart(observations: chartObservations, range: range, now: now)
+                        .frame(height: 148)
+                        .layoutPriority(1)
+                        .help(L10n.text("quota_chart_gap_note"))
+                        .reportQuotaFrame(.chart)
+                    tokenSummary
+                    if let lastConfirmedAt {
+                        Text(L10n.text("quota_last_confirmed", timestamp(lastConfirmedAt)))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
+                    observationTable
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .coordinateSpace(name: "quota-history-layout")
+        .onPreferenceChange(QuotaHistoryLayoutPreference.self) { frames in
+            if let metrics = QuotaHistoryLayoutMetrics(frames: frames) { layoutObserver?(metrics) }
+        }
         .onAppear(perform: synchronizeSelectedBucket)
         .onChange(of: range) { _, _ in synchronizeSelectedBucket() }
         .onChange(of: history) { _, _ in synchronizeSelectedBucket() }
     }
 
-    private var paceSummary: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let pace = consumptionPace {
-                Text(L10n.text("quota_consumption_pace"))
+    private var tokenSummary: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if let pace = consumptionPace, let tokens = tokenBreakdown(for: pace) {
+                Text(L10n.text("quota_tokens_average_format", tokenAverage(tokens.total, pace: pace)))
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+            } else {
+                Text(L10n.text("quota_tokens_unavailable"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Button {
+                showsTokenDetails.toggle()
+            } label: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L10n.text("quota_token_details"))
+            .help(L10n.text("quota_token_details"))
+            .popover(isPresented: $showsTokenDetails, arrowEdge: .bottom) {
+                tokenDetails
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var tokenDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L10n.text("quota_token_details"))
+                .font(.headline)
+            if let pace = consumptionPace, let tokens = tokenBreakdown(for: pace) {
                 Text(L10n.text(
-                    "quota_pace_average_format",
-                    QuotaConfirmationDuration.text(duration: pace.secondsPerPercentagePoint)
+                    "quota_tokens_breakdown_format",
+                    tokenAverage(tokens.input, pace: pace),
+                    tokenAverage(tokens.cacheRead, pace: pace),
+                    tokenAverage(tokens.output, pace: pace)
                 ))
-                .font(.subheadline.weight(.semibold))
-                Text(L10n.text("quota_pace_recent") + " · " + L10n.text(
+                Text(L10n.text(
                     "quota_pace_basis_format",
                     QuotaConfirmationDuration.text(duration: pace.elapsed),
                     pace.percentagePointDrop.formatted(.number.precision(.fractionLength(0...2)).locale(L10n.locale))
                 ))
-                .font(.caption)
-                .foregroundStyle(.secondary)
                 Text(period(start: pace.startedAt, end: pace.endedAt))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                tokenPaceSummary(pace)
             } else {
-                Text(L10n.text("quota_pace_insufficient"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(L10n.text("quota_tokens_unavailable"))
             }
-            Text(L10n.text("quota_pace_note"))
-                .font(.caption2)
+            Text(L10n.text("quota_tokens_note"))
                 .foregroundStyle(.secondary)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(L10n.text("quota_consumption_pace"))
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(14)
+        .frame(width: 340, alignment: .leading)
     }
 
-    @ViewBuilder
-    private func tokenPaceSummary(_ pace: QuotaConsumptionPace) -> some View {
-        if let bucket = selectedBucket,
-           let tokens = quotaTokenSummary?.tokens(
-               fromExclusive: pace.startedAt, through: pace.endedAt, limitID: bucket.limitID
-           ) {
-            Text(L10n.text("quota_tokens_average_format", tokenAverage(tokens.total, pace: pace)))
-                .font(.subheadline.weight(.semibold))
-                .padding(.top, 3)
-            Text(L10n.text(
-                "quota_tokens_breakdown_format",
-                tokenAverage(tokens.input, pace: pace),
-                tokenAverage(tokens.cacheRead, pace: pace),
-                tokenAverage(tokens.output, pace: pace)
-            ))
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            Text(L10n.text("quota_tokens_note"))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else {
-            Text(L10n.text("quota_tokens_unavailable"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
+    private func tokenBreakdown(for pace: QuotaConsumptionPace) -> TokenBreakdown? {
+        guard let bucket = selectedBucket else { return nil }
+        return quotaTokenSummary?.tokens(
+            fromExclusive: pace.startedAt, through: pace.endedAt, limitID: bucket.limitID
+        )
     }
 
     private func tokenAverage(_ tokens: Int64, pace: QuotaConsumptionPace) -> String {
@@ -212,42 +218,55 @@ struct UsageLimitHistoryView: View {
 
     private var observationTable: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
+            HStack(spacing: 12) {
                 Text(L10n.text("quota_confirmation_period"))
-                Spacer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(L10n.text("quota_remaining"))
+                    .frame(width: 68, alignment: .trailing)
                 Text(L10n.text("quota_next_reset"))
                     .frame(width: 130, alignment: .trailing)
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
+            .reportQuotaFrame(.tableHeader)
 
-            LazyVStack(spacing: 0) {
-                ForEach(observations.reversed()) { observation in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(QuotaConfirmationDuration.text(for: observation))
-                                .fontWeight(.medium)
-                            Text(confirmationPeriod(observation))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0) {
+                    ForEach(observations.reversed()) { observation in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(confirmationPeriod(observation))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text(QuotaConfirmationDuration.text(for: observation))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .monospacedDigit()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(confirmationPeriod(observation))
+                            Text(percentage(observation.remainingPercent))
+                                .monospacedDigit()
+                                .frame(width: 68, alignment: .trailing)
+                            Text(resetText(observation.resetsAt))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .frame(width: 130, alignment: .trailing)
                         }
-                        .monospacedDigit()
-                        Spacer()
-                        Text(percentage(observation.remainingPercent))
-                            .monospacedDigit()
-                        Text(resetText(observation.resetsAt))
-                            .monospacedDigit()
-                            .frame(width: 130, alignment: .trailing)
+                        .font(.caption)
+                        .padding(.vertical, 3)
+                        .accessibilityElement(children: .combine)
+                        Divider()
                     }
-                    .font(.caption)
-                    .padding(.vertical, 4)
-                    .accessibilityElement(children: .combine)
-                    Divider()
                 }
+                .frame(maxWidth: .infinity)
             }
+            .frame(maxHeight: .infinity)
             .accessibilityLabel(L10n.text("quota_observations_table"))
+            .reportQuotaFrame(.rowsViewport)
         }
+        .frame(maxHeight: .infinity)
     }
 
     private func bucketTitle(_ bucket: UsageLimitHistoryBucket) -> String {
@@ -309,5 +328,49 @@ struct UsageLimitHistoryView: View {
             selectedBucketID = UsageLimitHistoryTimeline.preferredBucket(in: buckets)?.id
             return
         }
+    }
+}
+
+struct QuotaHistoryLayoutMetrics: Equatable {
+    let rangePicker: CGRect
+    let windowPicker: CGRect
+    let chart: CGRect
+    let tableHeader: CGRect
+    let rowsViewport: CGRect
+
+    fileprivate init?(frames: [QuotaHistoryLayoutElement: CGRect]) {
+        guard let rangePicker = frames[.rangePicker], let windowPicker = frames[.windowPicker],
+              let chart = frames[.chart], let tableHeader = frames[.tableHeader],
+              let rowsViewport = frames[.rowsViewport] else { return nil }
+        self.rangePicker = rangePicker
+        self.windowPicker = windowPicker
+        self.chart = chart
+        self.tableHeader = tableHeader
+        self.rowsViewport = rowsViewport
+    }
+}
+
+private enum QuotaHistoryLayoutElement: Hashable {
+    case rangePicker, windowPicker, chart, tableHeader, rowsViewport
+}
+
+private struct QuotaHistoryLayoutPreference: PreferenceKey {
+    static let defaultValue: [QuotaHistoryLayoutElement: CGRect] = [:]
+    static func reduce(
+        value: inout [QuotaHistoryLayoutElement: CGRect],
+        nextValue: () -> [QuotaHistoryLayoutElement: CGRect]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private extension View {
+    func reportQuotaFrame(_ element: QuotaHistoryLayoutElement) -> some View {
+        background(GeometryReader { proxy in
+            Color.clear.preference(
+                key: QuotaHistoryLayoutPreference.self,
+                value: [element: proxy.frame(in: .named("quota-history-layout"))]
+            )
+        })
     }
 }

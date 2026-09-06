@@ -80,6 +80,13 @@ observation is more than thirty minutes after the previous confirmation. The
 one-second reset jitter does not split a confirmed epoch. Missing periods are
 not filled with synthetic zero, 100%, or invented observations.
 
+The selectors, chart, compact token reference, and table header stay fixed.
+Only the table rows scroll vertically. The chart has a grid and labels at
+0%, 25%, 50%, 75%, and 100%, plus vertical guides at the range-specific time
+ticks. Token-estimate details are available from the
+information button, keeping long explanations out of the main history panel.
+The elapsed-time consumption-pace display is not shown.
+
 The table shows the confirmation period, its readable duration (for example,
 35 minutes or 2 hours 15 minutes), remaining percentage, and reset time. A
 single observation is explicitly labeled rather than presented as a measured
@@ -94,21 +101,21 @@ and clips the line to the plot. It does not move the endpoint to the cutoff or
 add a synthetic marker. The outside predecessor is absent from table rows.
 Model-specific allowances never join the general Codex allowance.
 
-## Observed consumption pace
+## Observed token reference
 
-The summary uses the latest continuous segment in the selected range. Its
-actual first and last change timestamps and percentage-point drop determine
-the average elapsed time per 1%. For example, a four-point drop over 135
-minutes gives about 33 minutes per 1%, with the four-point basis shown. A
-constant run's last-confirmed time is used to check continuity, never as the
-timestamp of a future drop. The calculation never extends to the current clock.
+The estimate uses the latest continuous segment in the selected range. Its
+actual first and last change timestamps and percentage-point drop define the
+comparison interval. A constant run's last-confirmed time is used to check
+continuity, never as the timestamp of a future drop. The calculation never
+extends to the current clock. The time-based pace helper remains internal;
+the user-facing reference is tokens per 1%.
 
 Both rate endpoints must be actual observations inside the chosen range. A
 chart boundary cannot create a rate baseline. Resets, recoveries, gaps over
 thirty minutes, conflicting timestamps, reversed order, or insufficient
 observations cannot supply a rate across the break. The latest segment needs
 its own observed decrease; an older segment's rate is not carried forward.
-The result describes account-wide observed elapsed time, not active work time.
+The observed interval is elapsed wall-clock time, not active work time.
 
 The token estimate uses the same endpoints and divides normalized local Codex
 tokens by the observed percentage-point drop. The interval is `(start, end]`:
@@ -134,10 +141,9 @@ SQLite scan failures throw instead of returning a partial total. A namespaced sc
 checkpoint records when verifiable token coverage begins. Older imported
 history did not retain malformed-line diagnostics, so token intervals starting
 before that watermark remain unavailable; no full log reimport is forced.
-Once two actual quota changes exist after the watermark, the time and token
-summaries use that shared interval. Before then, older observations can still
-supply the time-only estimate. The watermark never becomes a synthetic quota
-observation.
+Once two actual quota changes exist after the watermark, the token reference
+can use that interval. Before then, the reference remains unavailable. The
+watermark never becomes a synthetic quota observation.
 
 The token parser remains at version 2. A negative Codex cursor version (`-2`)
 records known incomplete coverage and keeps estimates unavailable on later

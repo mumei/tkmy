@@ -72,6 +72,13 @@ struct UsageLimitHistoryChart: View {
                     height: max(1, size.height - 28)
                 )
                 drawGrid(in: &context, chartRect: chartRect)
+                for tick in ticks {
+                    let x = xPosition(tick, cutoff: cutoff, in: chartRect)
+                    var grid = Path()
+                    grid.move(to: CGPoint(x: x, y: chartRect.minY))
+                    grid.addLine(to: CGPoint(x: x, y: chartRect.maxY))
+                    context.stroke(grid, with: .color(.secondary.opacity(0.16)), lineWidth: 1)
+                }
 
                 var plotContext = context
                 plotContext.clip(to: Path(chartRect))
@@ -102,7 +109,7 @@ struct UsageLimitHistoryChart: View {
     }
 
     private func drawGrid(in context: inout GraphicsContext, chartRect: CGRect) {
-        for level in [0.0, 50.0, 100.0] {
+        for level in [0.0, 25.0, 50.0, 75.0, 100.0] {
             let y = yPosition(level, in: chartRect)
             var grid = Path()
             grid.move(to: CGPoint(x: chartRect.minX, y: y))
