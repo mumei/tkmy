@@ -206,11 +206,71 @@ public actor SQLiteUsageStore: UsageEventStore {
         }.sorted { $0.day < $1.day }
     }
 
+    /// Saves only observations in the current retention window. Pruning and
+    /// insertion share one transaction so expired observations cannot reappear
+    /// due to a partial update.
+    public func upsertUsageLimits(_ samples: [UsageLimitSnapshot], now: Date) throws {
+        let cutoff = UsageLimitHistoryPolicy.cutoff(relativeTo: now)
+        let accepted = samples.filter {
+            UsageLimitHistoryPolicy.contains($0.observedAt, relativeTo: now)
+                && $0.usedPercent.isFinite && $0.windowMinutes > 0 && !$0.limitID.isEmpty
+                && Int64(exactly: ($0.observedAt.timeIntervalSince1970 * 1_000).rounded()) != nil
+                && ($0.resetsAt == nil || Int64(exactly: ($0.resetsAt!.timeIntervalSince1970 * 1_000).rounded()) != nil)
+        }
+        try execute("BEGIN IMMEDIATE")
+        do {
+            try deleteUsageLimitSamples(before: cutoff)
+            try insertUsageLimitSamples(accepted)
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    public func usageLimitHistory(
+        source: UsageSource,
+        from: Date,
+        through: Date
+    ) throws -> [UsageLimitSnapshot] {
+        let statement = try prepare("""
+        SELECT limit_id, used_percent, window_minutes, resets_at_ms, observed_at_ms
+        FROM usage_limit_samples
+        WHERE source = ? AND observed_at_ms >= ? AND observed_at_ms < ?
+        ORDER BY observed_at_ms ASC, limit_id ASC, window_minutes ASC, resets_at_ms ASC, used_percent ASC
+        """)
+        defer { sqlite3_finalize(statement) }
+        bind(source.rawValue, at: 1, to: statement)
+        bind(milliseconds(from), at: 2, to: statement)
+        bind(milliseconds(through), at: 3, to: statement)
+
+        var samples: [UsageLimitSnapshot] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let resetMilliseconds = sqlite3_column_int64(statement, 3)
+            samples.append(UsageLimitSnapshot(
+                source: source,
+                limitID: text(statement, 0) ?? "",
+                usedPercent: sqlite3_column_double(statement, 1),
+                windowMinutes: Int(sqlite3_column_int64(statement, 2)),
+                resetsAt: resetMilliseconds == Self.noResetMilliseconds
+                    ? nil
+                    : Date(timeIntervalSince1970: Double(resetMilliseconds) / 1_000),
+                observedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(statement, 4)) / 1_000)
+            ))
+        }
+        return samples
+    }
+
+    public func pruneUsageLimitHistory(now: Date) throws {
+        try deleteUsageLimitSamples(before: UsageLimitHistoryPolicy.cutoff(relativeTo: now))
+    }
+
     public func deleteHistory() async throws {
         try execute("BEGIN IMMEDIATE")
         do {
             try execute("DELETE FROM usage_events")
             try execute("DELETE FROM source_cursors")
+            try execute("DELETE FROM usage_limit_samples")
             try execute("COMMIT")
         } catch {
             try? execute("ROLLBACK")
@@ -282,6 +342,19 @@ public actor SQLiteUsageStore: UsageEventStore {
         try execute("CREATE INDEX IF NOT EXISTS idx_usage_source_time ON usage_events(source, occurred_at_ms)", database: database)
         try execute("CREATE INDEX IF NOT EXISTS idx_usage_origin ON usage_events(source, origin_path_hash)", database: database)
         try execute("""
+        CREATE TABLE IF NOT EXISTS usage_limit_samples(
+          source TEXT NOT NULL,
+          limit_id TEXT NOT NULL,
+          used_percent REAL NOT NULL,
+          window_minutes INTEGER NOT NULL,
+          resets_at_ms INTEGER NOT NULL,
+          observed_at_ms INTEGER NOT NULL,
+          PRIMARY KEY(source, limit_id, window_minutes, resets_at_ms, observed_at_ms, used_percent)
+        )
+        """, database: database)
+        try execute("CREATE INDEX IF NOT EXISTS idx_usage_limit_source_observed ON usage_limit_samples(source, observed_at_ms)", database: database)
+        try execute("CREATE INDEX IF NOT EXISTS idx_usage_limit_observed ON usage_limit_samples(observed_at_ms)", database: database)
+        try execute("""
         CREATE TABLE IF NOT EXISTS source_cursors(
           source TEXT NOT NULL,
           path_hash TEXT NOT NULL,
@@ -296,7 +369,7 @@ public actor SQLiteUsageStore: UsageEventStore {
         """, database: database)
         try? execute("ALTER TABLE source_cursors ADD COLUMN content_signature TEXT NOT NULL DEFAULT ''", database: database)
         try? execute("ALTER TABLE source_cursors ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 1", database: database)
-        try execute("PRAGMA user_version = 2", database: database)
+        try execute("PRAGMA user_version = 3", database: database)
     }
 
     private static func execute(_ sql: String, database: OpaquePointer?) throws {
@@ -362,6 +435,36 @@ public actor SQLiteUsageStore: UsageEventStore {
             bind(event.model, at: 11, to: statement)
             bind(event.sourceCostMicrosUSD, at: 12, to: statement)
             bind(event.originPathHash, at: 13, to: statement)
+            try stepDone(statement)
+        }
+    }
+
+    private static let noResetMilliseconds = Int64.min
+
+    private func deleteUsageLimitSamples(before cutoff: Date) throws {
+        let statement = try prepare("DELETE FROM usage_limit_samples WHERE observed_at_ms < ?")
+        defer { sqlite3_finalize(statement) }
+        bind(milliseconds(cutoff), at: 1, to: statement)
+        try stepDone(statement)
+    }
+
+    private func insertUsageLimitSamples(_ samples: [UsageLimitSnapshot]) throws {
+        guard !samples.isEmpty else { return }
+        let statement = try prepare("""
+        INSERT OR IGNORE INTO usage_limit_samples(
+          source, limit_id, used_percent, window_minutes, resets_at_ms, observed_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """)
+        defer { sqlite3_finalize(statement) }
+        for sample in samples {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+            bind(sample.source.rawValue, at: 1, to: statement)
+            bind(sample.limitID, at: 2, to: statement)
+            sqlite3_bind_double(statement, 3, sample.usedPercent)
+            bind(Int64(sample.windowMinutes), at: 4, to: statement)
+            bind(sample.resetsAt.map(milliseconds) ?? Self.noResetMilliseconds, at: 5, to: statement)
+            bind(milliseconds(sample.observedAt), at: 6, to: statement)
             try stepDone(statement)
         }
     }
@@ -450,4 +553,8 @@ private func text(_ statement: OpaquePointer, _ index: Int32) -> String? {
 
 private func optionalInt64(_ statement: OpaquePointer, _ index: Int32) -> Int64? {
     sqlite3_column_type(statement, index) == SQLITE_NULL ? nil : sqlite3_column_int64(statement, index)
+}
+
+private func milliseconds(_ date: Date) -> Int64 {
+    Int64((date.timeIntervalSince1970 * 1_000).rounded())
 }

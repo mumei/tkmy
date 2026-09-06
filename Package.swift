@@ -23,7 +23,7 @@ let package = Package(
             dependencies: ["UsageDomain"],
             resources: [.process("Resources")]
         ),
-        .target(name: "UsageIngestion", dependencies: ["UsageDomain"]),
+        .target(name: "UsageIngestion", dependencies: ["UsageDomain", "UsageStore"]),
         .target(name: "UsageStore", dependencies: ["UsageDomain"]),
         .target(name: "UsageUI", dependencies: ["UsageDomain"]),
         .target(
@@ -47,7 +47,7 @@ let package = Package(
         ),
         .testTarget(name: "UsageDomainTests", dependencies: ["UsageDomain"]),
         .testTarget(name: "UsagePricingTests", dependencies: ["UsagePricing", "UsageDomain"]),
-        .testTarget(name: "UsageIngestionTests", dependencies: ["UsageIngestion", "UsageDomain"]),
+        .testTarget(name: "UsageIngestionTests", dependencies: ["UsageIngestion", "UsageDomain", "UsageStore"]),
         .testTarget(name: "UsageStoreTests", dependencies: ["UsageStore", "UsageDomain"]),
         .testTarget(name: "UsageUITests", dependencies: ["UsageUI", "UsageDomain"]),
     ]

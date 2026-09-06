@@ -11,6 +11,7 @@ actor UsageCoordinator {
     private static let codexStateLookbackBytes: UInt64 = 4 * 1_048_576
     private let store: SQLiteUsageStore
     private let calculator: UsagePriceCalculator
+    private let quotaHistoryImporter: CodexUsageLimitHistoryImporter
     private let codex = CodexAdapter()
     private let claude = ClaudeCodeAdapter()
     private var scanTask: Task<Void, Never>?
@@ -19,6 +20,7 @@ actor UsageCoordinator {
     init(store: SQLiteUsageStore, calculator: UsagePriceCalculator) {
         self.store = store
         self.calculator = calculator
+        self.quotaHistoryImporter = CodexUsageLimitHistoryImporter(store: store)
     }
 
     func load(_ source: UsageSource) async throws -> SourceUsageLoadResult {
@@ -34,6 +36,9 @@ actor UsageCoordinator {
     private func performLoad(_ source: UsageSource) async throws -> SourceUsageLoadResult {
         let adapter: any UsageSourceAdapter = source == .codex ? codex : claude
         let files = try adapter.discoverLogFiles()
+        // Retention applies only to the new quota observations, even when no
+        // Codex logs have changed or are currently available.
+        try await store.pruneUsageLimitHistory(now: Date())
 
         var unreadable = 0
         for file in files {
@@ -90,10 +95,16 @@ actor UsageCoordinator {
                     let result = parser.consume(chunk, isFinal: false)
                     unreadable += result.malformedLineCount
                     try await store.upsert(result.events)
+                    if !result.usageLimits.isEmpty {
+                        try await store.upsertUsageLimits(result.usageLimits, now: Date())
+                    }
                 }
                 let finalResult = parser.consume(Data(), isFinal: true)
                 unreadable += finalResult.malformedLineCount
                 try await store.upsert(finalResult.events)
+                if !finalResult.usageLimits.isEmpty {
+                    try await store.upsertUsageLimits(finalResult.usageLimits, now: Date())
+                }
                 let consumedOffset = min(
                     size,
                     parserStart + UInt64(finalResult.consumedByteCount)
@@ -115,6 +126,11 @@ actor UsageCoordinator {
             }
         }
 
+        if source == .codex {
+            let progress = try await quotaHistoryImporter.refresh(files: files, now: Date())
+            unreadable += progress.unreadableFiles
+        }
+
         let calendar = Calendar.current
         let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
         let from = calendar.date(byAdding: .day, value: -364, to: through) ?? .distantPast
@@ -129,16 +145,27 @@ actor UsageCoordinator {
         let daily = report.dailyUsage
         let dailyByModel = report.dailyModelUsage
         let usageLimit = source == .codex ? codex.latestUsageLimit(in: files) : nil
+        if let usageLimit {
+            // Save the timestamp reported by Codex, never the refresh time.
+            try await store.upsertUsageLimits([usageLimit], now: Date())
+        }
+        let refreshedAt = Date()
+        let usageLimitHistory = try await store.usageLimitHistory(
+            source: source,
+            from: refreshedAt.addingTimeInterval(-30 * 24 * 60 * 60),
+            through: refreshedAt
+        )
         let snapshot = SourceUsageSnapshot(
             source: source,
             dailyUsage: daily,
             dailyModelUsage: dailyByModel,
-            refreshedAt: Date(),
+            refreshedAt: refreshedAt,
             pricingUpdatedAt: Self.parseCatalogDate(calculator.catalog.effectiveDate),
-            usageLimit: usageLimit
+            usageLimit: usageLimit,
+            usageLimitHistory: usageLimitHistory
         )
         if files.isEmpty {
-            return daily.isEmpty
+            return daily.isEmpty && usageLimitHistory.isEmpty
                 ? .sourceMissing(searchedLocations: searchedLocations(for: source))
                 : .staleSource(
                     snapshot: snapshot,

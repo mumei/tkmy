@@ -12,7 +12,7 @@ public enum UsageSource: String, Codable, CaseIterable, Sendable {
     }
 }
 
-public struct UsageLimitSnapshot: Equatable, Sendable {
+public struct UsageLimitSnapshot: Hashable, Identifiable, Sendable {
     public let source: UsageSource
     public let limitID: String
     public let usedPercent: Double
@@ -37,6 +37,29 @@ public struct UsageLimitSnapshot: Equatable, Sendable {
     }
 
     public var remainingPercent: Double { max(0, 100 - usedPercent) }
+
+    /// A value identity rather than an observation-series identity. This keeps
+    /// separate limits and resets distinct while making repeated reads of the
+    /// same provider sample idempotent.
+    public var id: String {
+        let reset = resetsAt.map { String(Int64(($0.timeIntervalSince1970 * 1_000).rounded())) } ?? "none"
+        let observed = Int64((observedAt.timeIntervalSince1970 * 1_000).rounded())
+        return "\(source.rawValue):\(limitID):\(windowMinutes):\(reset):\(observed):\(usedPercent.bitPattern)"
+    }
+}
+
+/// The time span retained for provider-reported remaining-quota observations.
+/// Token events and source cursors have independent retention semantics.
+public enum UsageLimitHistoryPolicy {
+    public static let retentionInterval: TimeInterval = 365 * 24 * 60 * 60
+
+    public static func cutoff(relativeTo now: Date) -> Date {
+        now.addingTimeInterval(-retentionInterval)
+    }
+
+    public static func contains(_ date: Date, relativeTo now: Date) -> Bool {
+        date >= cutoff(relativeTo: now) && date <= now
+    }
 }
 
 public struct TokenBreakdown: Codable, Equatable, Sendable {

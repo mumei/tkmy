@@ -100,6 +100,122 @@ import UsageDomain
     #expect(SourceUsagePopoverSizing.contentHeight(for: (0..<9).map(makeUsage)) == 642)
 }
 
+@MainActor
+@Test func latestQuotaHistoryReplacesPriorHistoryAfterRefresh() async {
+    let initial = Date(timeIntervalSince1970: 1_760_000_000)
+    let latest = initial.addingTimeInterval(60)
+    let viewModel = SourceUsageViewModel(source: .codex, loader: {
+        .ready(SourceUsageSnapshot(
+            source: .codex,
+            dailyUsage: [],
+            usageLimitHistory: [quota(observedAt: latest, remaining: 72)]
+        ))
+    })
+
+    viewModel.apply(.ready(SourceUsageSnapshot(
+        source: .codex,
+        dailyUsage: [],
+        usageLimitHistory: [quota(observedAt: initial, remaining: 81)]
+    )))
+    await viewModel.refresh()
+
+    #expect(viewModel.usageLimitHistory == [quota(observedAt: latest, remaining: 72)])
+}
+
+@MainActor
+@Test func quotaHistoryIsClearedForMismatchedSnapshotSource() {
+    let viewModel = SourceUsageViewModel(source: .codex)
+    viewModel.apply(.ready(SourceUsageSnapshot(
+        source: .claudeCode,
+        dailyUsage: [],
+        usageLimitHistory: [quota(source: .claudeCode)]
+    )))
+
+    #expect(viewModel.usageLimitHistory.isEmpty)
+    #expect(viewModel.phase == .unavailable(reason: L10n.text("source_mismatch")))
+}
+
+@Test func quotaHistoryFiltersActualDateRangeAndNeverFutureObservations() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let bucket = UsageLimitHistoryBucket(quota(observedAt: now))
+    let history = [
+        quota(observedAt: now.addingTimeInterval(-(7 * 24 * 60 * 60))),
+        quota(observedAt: now.addingTimeInterval(-(7 * 24 * 60 * 60) - 1)),
+        quota(observedAt: now.addingTimeInterval(-60)),
+        quota(observedAt: now.addingTimeInterval(1)),
+    ]
+
+    let filtered = UsageLimitHistoryTimeline.observations(
+        from: history,
+        source: .codex,
+        bucket: bucket,
+        range: .sevenDays,
+        now: now
+    )
+
+    #expect(filtered.map(\.observedAt) == [history[0].observedAt, history[2].observedAt])
+}
+
+@Test func quotaHistorySeparatesSourcesBucketsAndWindows() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let generalFiveHour = quota(limitID: "codex", windowMinutes: 300, observedAt: now)
+    let modelFiveHour = quota(limitID: "gpt-5.6-sol", windowMinutes: 300, observedAt: now)
+    let generalWeek = quota(limitID: "codex", windowMinutes: 10_080, observedAt: now)
+    let claude = quota(source: .claudeCode, observedAt: now)
+    let buckets = UsageLimitHistoryTimeline.buckets(
+        from: [generalFiveHour, modelFiveHour, generalWeek, claude],
+        source: .codex,
+        range: .sevenDays,
+        now: now
+    )
+
+    #expect(Set(buckets) == Set([
+        UsageLimitHistoryBucket(generalFiveHour),
+        UsageLimitHistoryBucket(modelFiveHour),
+        UsageLimitHistoryBucket(generalWeek),
+    ]))
+    #expect(UsageLimitHistoryTimeline.preferredBucket(in: buckets) == UsageLimitHistoryBucket(generalWeek))
+}
+
+@Test func quotaHistoryChartBreaksForGapsResetChangesAndRecoveries() {
+    let origin = Date(timeIntervalSince1970: 1_760_000_000)
+    let reset = origin.addingTimeInterval(10_000)
+    let observations = [
+        quota(observedAt: origin, resetsAt: reset, remaining: 90),
+        quota(observedAt: origin.addingTimeInterval(60), resetsAt: reset, remaining: 80),
+        quota(observedAt: origin.addingTimeInterval(60 * 32), resetsAt: reset, remaining: 70),
+        quota(observedAt: origin.addingTimeInterval(60 * 33), resetsAt: origin.addingTimeInterval(20_000), remaining: 65),
+        quota(observedAt: origin.addingTimeInterval(60 * 34), resetsAt: origin.addingTimeInterval(20_000), remaining: 75),
+    ]
+
+    #expect(UsageLimitHistoryTimeline.segments(observations).map(\.count) == [2, 1, 1, 1])
+}
+
+@Test func quotaHistoryHasEmptyStateForAbsentOrOutOfPeriodObservations() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let old = quota(observedAt: now.addingTimeInterval(-(31 * 24 * 60 * 60)))
+    #expect(UsageLimitHistoryTimeline.buckets(from: [], source: .codex, range: .sevenDays, now: now).isEmpty)
+    #expect(UsageLimitHistoryTimeline.buckets(from: [old], source: .codex, range: .thirtyDays, now: now).isEmpty)
+}
+
+private func quota(
+    source: UsageSource = .codex,
+    limitID: String = "codex",
+    windowMinutes: Int = 300,
+    observedAt: Date = Date(timeIntervalSince1970: 1_760_000_000),
+    resetsAt: Date? = nil,
+    remaining: Double = 80
+) -> UsageLimitSnapshot {
+    UsageLimitSnapshot(
+        source: source,
+        limitID: limitID,
+        usedPercent: 100 - remaining,
+        windowMinutes: windowMinutes,
+        resetsAt: resetsAt,
+        observedAt: observedAt
+    )
+}
+
 private func usage(
     year: Int,
     month: Int,

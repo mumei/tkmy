@@ -86,3 +86,116 @@ import UsageDomain
     )
     #expect(Set(events.map(\.eventKey)) == ["replacement", "other"])
 }
+
+@Test func usageLimitHistoryRetainsExact365DayBoundaryAndRejectsOldOrFutureSamples() async throws {
+    let store = try makeStore()
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let cutoff = UsageLimitHistoryPolicy.cutoff(relativeTo: now)
+    try await store.upsertUsageLimits([
+        limit(observedAt: cutoff.addingTimeInterval(-0.001), usedPercent: 1),
+        limit(observedAt: cutoff, usedPercent: 2),
+        limit(observedAt: now, usedPercent: 3),
+        limit(observedAt: now.addingTimeInterval(0.001), usedPercent: 4),
+    ], now: now)
+
+    let history = try await store.usageLimitHistory(
+        source: .codex,
+        from: cutoff.addingTimeInterval(-1),
+        through: now.addingTimeInterval(1)
+    )
+    #expect(history.map(\.usedPercent) == [2, 3])
+}
+
+@Test func advancingClockPrunesAndRejectedOldSampleCannotResurrect() async throws {
+    let store = try makeStore()
+    let originalNow = Date(timeIntervalSince1970: 2_000_000_000)
+    let sample = limit(observedAt: originalNow, usedPercent: 33)
+    try await store.upsertUsageLimits([sample], now: originalNow)
+
+    let advancedNow = originalNow.addingTimeInterval(UsageLimitHistoryPolicy.retentionInterval + 1)
+    try await store.pruneUsageLimitHistory(now: advancedNow)
+    try await store.upsertUsageLimits([sample], now: advancedNow)
+
+    let history = try await store.usageLimitHistory(
+        source: .codex,
+        from: originalNow.addingTimeInterval(-1),
+        through: advancedNow.addingTimeInterval(1)
+    )
+    #expect(history.isEmpty)
+}
+
+@Test func usageLimitHistoryDeduplicatesAndKeepsDistinctLimitWindowAndReset() async throws {
+    let store = try makeStore()
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let observedAt = now.addingTimeInterval(-60)
+    let base = limit(observedAt: observedAt, usedPercent: 40)
+    let differentWindow = limit(observedAt: observedAt, usedPercent: 40, windowMinutes: 10_080)
+    let differentLimit = limit(observedAt: observedAt, usedPercent: 40, limitID: "secondary")
+    let differentReset = limit(observedAt: observedAt, usedPercent: 40, resetsAt: now.addingTimeInterval(600))
+    try await store.upsertUsageLimits([base, base, differentWindow, differentLimit, differentReset], now: now)
+    try await store.upsertUsageLimits([base], now: now)
+
+    let history = try await store.usageLimitHistory(
+        source: .codex,
+        from: observedAt.addingTimeInterval(-1),
+        through: now
+    )
+    #expect(history.count == 4)
+    #expect(Set(history).count == 4)
+}
+
+@Test func usageLimitHistoryPersistsAcrossStoreReopenAndPruningDoesNotTouchTokenEvents() async throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("TKMYLimits-\(UUID().uuidString).sqlite3")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let old = limit(observedAt: now.addingTimeInterval(-UsageLimitHistoryPolicy.retentionInterval - 1), usedPercent: 10)
+    let current = limit(observedAt: now, usedPercent: 20)
+    let event = NormalizedUsageEvent(
+        eventKey: "token-event",
+        source: .codex,
+        occurredAt: old.observedAt,
+        tokens: .init(input: 1),
+        originPathHash: "origin"
+    )
+
+    let store = try SQLiteUsageStore(databaseURL: url)
+    try await store.upsert([event])
+    try await store.upsertUsageLimits([old, current], now: now)
+    try await store.pruneUsageLimitHistory(now: now)
+    let reopened = try SQLiteUsageStore(databaseURL: url)
+
+    let history = try await reopened.usageLimitHistory(
+        source: .codex,
+        from: now.addingTimeInterval(-UsageLimitHistoryPolicy.retentionInterval - 1),
+        through: now.addingTimeInterval(1)
+    )
+    let events = try await reopened.events(
+        source: .codex,
+        from: old.observedAt.addingTimeInterval(-1),
+        through: old.observedAt.addingTimeInterval(1)
+    )
+    #expect(history == [current])
+    #expect(events == [event])
+}
+
+private func makeStore() throws -> SQLiteUsageStore {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("TKMYLimits-\(UUID().uuidString).sqlite3")
+    return try SQLiteUsageStore(databaseURL: url)
+}
+
+private func limit(
+    observedAt: Date,
+    usedPercent: Double,
+    limitID: String = "codex",
+    windowMinutes: Int = 300,
+    resetsAt: Date? = nil
+) -> UsageLimitSnapshot {
+    UsageLimitSnapshot(
+        source: .codex,
+        limitID: limitID,
+        usedPercent: usedPercent,
+        windowMinutes: windowMinutes,
+        resetsAt: resetsAt,
+        observedAt: observedAt
+    )
+}

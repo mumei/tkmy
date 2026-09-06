@@ -5,7 +5,9 @@ import Testing
 import UsageDomain
 @testable import UsageUI
 
+@Suite(.serialized)
 @MainActor
+struct SourceUsagePopoverRenderingTests {
 @Test("Usage popover renders every supported language without clipping")
 func usagePopoverRendersEveryLanguageAndModelRowCount() throws {
     let defaults = UserDefaults.standard
@@ -158,6 +160,77 @@ func usagePopoverRendersEveryLanguageAndModelRowCount() throws {
             "Claude Code selected-day card overlapped the footer for \(language.rawValue)"
         )
     }
+}
+
+@Test("Quota history pane renders every supported language")
+func quotaHistoryPaneRendersEveryLanguage() throws {
+    let defaults = UserDefaults.standard
+    let previousLanguage = defaults.object(forKey: L10n.defaultsKey)
+    defer {
+        if let previousLanguage { defaults.set(previousLanguage, forKey: L10n.defaultsKey) }
+        else { defaults.removeObject(forKey: L10n.defaultsKey) }
+    }
+
+    let now = Date()
+    let snapshotDirectory = try makeSnapshotDirectory()
+    _ = NSApplication.shared
+    let history: [UsageLimitSnapshot] = (0..<12).map { (index: Int) -> UsageLimitSnapshot in
+        let isGeneral = index.isMultiple(of: 2)
+        let usedPercent = Double(60 - (index * 4))
+        let windowMinutes: Int = isGeneral ? 300 : 10_080
+        let observationOffset: TimeInterval = -TimeInterval(index * 10 * 60)
+        let resetsAt: Date? = now.addingTimeInterval(8_000)
+        return UsageLimitSnapshot(
+            source: .codex,
+            limitID: isGeneral ? "codex" : "gpt-5.6-sol",
+            usedPercent: usedPercent,
+            windowMinutes: windowMinutes,
+            resetsAt: resetsAt,
+            observedAt: now.addingTimeInterval(observationOffset)
+        )
+    }
+    for language in AppLanguage.allCases {
+        defaults.set(language.rawValue, forKey: L10n.defaultsKey)
+        let viewModel = SourceUsageViewModel(source: .codex)
+        viewModel.apply(.ready(SourceUsageSnapshot(
+            source: .codex,
+            dailyUsage: [],
+            usageLimitHistory: history
+        )))
+        let view = SourceUsagePopoverView(
+            viewModel: viewModel,
+            expectedSource: .codex,
+            initialPane: .quotaHistory
+        )
+            .environment(\.locale, Locale(identifier: language.rawValue))
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: SourceUsagePopoverSizing.width,
+            height: SourceUsagePopoverSizing.contentHeight(for: [])
+        )
+        hostingView.layoutSubtreeIfNeeded()
+        let representation = try #require(
+            hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds),
+            "Could not render quota history for \(language.rawValue)"
+        )
+        hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+        let pngData: Data = try #require(
+            representation.representation(using: .png, properties: [:]),
+            "Could not encode quota history for \(language.rawValue)"
+        )
+        try pngData.write(
+            to: snapshotDirectory.appendingPathComponent("quota-history-\(language.rawValue).png"),
+            options: Data.WritingOptions.atomic
+        )
+        #expect(
+            snapshotContainsVisualVariation(representation),
+            "Quota history pane was blank for \(language.rawValue)"
+        )
+    }
+}
+
 }
 
 private struct RenderedPopover {

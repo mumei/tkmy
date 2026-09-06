@@ -72,4 +72,14 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(overLimit.remainingPercent, 0)
         XCTAssertEqual(overLimit.windowMinutes, 0)
     }
+
+    func testUsageLimitHistoryPolicyIncludesExact365DayBoundary() {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let cutoff = UsageLimitHistoryPolicy.cutoff(relativeTo: now)
+        XCTAssertEqual(now.timeIntervalSince(cutoff), 365 * 24 * 60 * 60)
+        XCTAssertTrue(UsageLimitHistoryPolicy.contains(cutoff, relativeTo: now))
+        XCTAssertFalse(UsageLimitHistoryPolicy.contains(cutoff.addingTimeInterval(-0.001), relativeTo: now))
+        XCTAssertTrue(UsageLimitHistoryPolicy.contains(now, relativeTo: now))
+        XCTAssertFalse(UsageLimitHistoryPolicy.contains(now.addingTimeInterval(0.001), relativeTo: now))
+    }
 }

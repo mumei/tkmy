@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import UsageDomain
 
 public struct CodexAdapter: UsageSourceAdapter {
@@ -103,14 +104,14 @@ public struct CodexAdapter: UsageSourceAdapter {
         ["primary", "secondary"]
             .compactMap { key -> (usedPercent: Double, minutes: Int, resetsAt: Date?)? in
                 guard let value = limits[key] as? [String: Any],
-                      let usedPercent = (value["used_percent"] ?? value["usedPercent"]) as? NSNumber,
-                      let minutes = (value["window_minutes"] ?? value["windowMinutes"]) as? NSNumber
+                      let usedPercent = Self.validNumber(value["used_percent"] ?? value["usedPercent"]),
+                      let minutes = Self.validWholePositiveInt(value["window_minutes"] ?? value["windowMinutes"] ?? value["window_duration_mins"] ?? value["windowDurationMins"])
                 else { return nil }
                 let resetValue = value["resets_at"] ?? value["resetsAt"]
                 return (
-                    usedPercent.doubleValue,
-                    minutes.intValue,
-                    IngestionSupport.date(resetValue)
+                    usedPercent,
+                    minutes,
+                    Self.validDate(resetValue)
                 )
             }
             .max { $0.minutes < $1.minutes }
@@ -159,6 +160,50 @@ public struct CodexAdapter: UsageSourceAdapter {
     fileprivate static func tokenDictionary(_ value: TokenBreakdown) -> [String: Int64] {
         ["input": value.input, "cacheRead": value.cacheRead, "output": value.output, "reasoning": value.reasoningOutput]
     }
+
+    static func limitSnapshots(from object: [String: Any], now: Date = Date()) -> [UsageLimitSnapshot] {
+        guard object["type"] as? String == "event_msg",
+              let payload = object["payload"] as? [String: Any],
+              payload["type"] as? String == "token_count",
+              let limits = payload["rate_limits"] as? [String: Any],
+              let observedAt = IngestionSupport.date(object["timestamp"] ?? payload["timestamp"]),
+              UsageLimitHistoryPolicy.contains(observedAt, relativeTo: now)
+        else { return [] }
+        let limitID = IngestionSupport.string(limits, "limit_id", "limitId") ?? ""
+        guard !limitID.isEmpty else { return [] }
+        return ["primary", "secondary"].compactMap { key in
+            guard let value = limits[key] as? [String: Any],
+                  let used = validNumber(value["used_percent"] ?? value["usedPercent"]),
+                  let minutes = validWholePositiveInt(value["window_minutes"] ?? value["windowMinutes"] ?? value["window_duration_mins"] ?? value["windowDurationMins"])
+            else { return nil }
+            let resetValue = value["resets_at"] ?? value["resetsAt"]
+            return UsageLimitSnapshot(source: .codex, limitID: limitID, usedPercent: used,
+                                      windowMinutes: minutes, resetsAt: validDate(resetValue), observedAt: observedAt)
+        }
+    }
+
+    private static func validNumber(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite else { return nil }
+        return number.doubleValue
+    }
+
+    private static func validWholePositiveInt(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite,
+              number.doubleValue > 0,
+              let integer = Int(exactly: number.doubleValue) else { return nil }
+        return integer
+    }
+
+    private static func validDate(_ value: Any?) -> Date? {
+        if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() { return nil }
+        guard let date = IngestionSupport.date(value),
+              Int64(exactly: (date.timeIntervalSince1970 * 1_000).rounded()) != nil else { return nil }
+        return date
+    }
 }
 
 private final class CodexStreamParser: UsageStreamParser {
@@ -176,7 +221,7 @@ private final class CodexStreamParser: UsageStreamParser {
     func consume(_ data: Data, isFinal: Bool) -> UsageParseResult {
         buffer.consume(data, isFinal: isFinal) { [weak self] object in
             self?.event(from: object)
-        }
+        } limitTransform: { CodexAdapter.limitSnapshots(from: $0) }
     }
 
     private func event(from object: [String: Any]) -> NormalizedUsageEvent? {

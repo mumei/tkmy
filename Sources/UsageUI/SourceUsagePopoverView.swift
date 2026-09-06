@@ -35,6 +35,7 @@ public struct SourceUsagePopoverView: View {
     private let expectedSource: UsageSource
     private let layoutObserver: ((SourceUsagePopoverLayoutMetrics) -> Void)?
     @State private var hoveredDay: Date?
+    @State private var selectedPane: UsagePopoverPane = .usage
     @AppStorage(L10n.defaultsKey) private var languageRawValue = AppLanguage.systemDefault().rawValue
 
     public init(viewModel: SourceUsageViewModel) {
@@ -47,12 +48,14 @@ public struct SourceUsagePopoverView: View {
     init(
         viewModel: SourceUsageViewModel,
         expectedSource: UsageSource,
+        initialPane: UsagePopoverPane = .usage,
         layoutObserver: ((SourceUsagePopoverLayoutMetrics) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.expectedSource = expectedSource
         self.layoutObserver = layoutObserver
         self._hoveredDay = State(initialValue: nil)
+        self._selectedPane = State(initialValue: initialPane)
     }
 
     public var body: some View {
@@ -88,6 +91,17 @@ public struct SourceUsagePopoverView: View {
         HStack(alignment: .center) {
             Text(expectedSource.displayName)
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
+
+            if expectedSource == .codex {
+                Picker(L10n.text("usage_pane"), selection: $selectedPane) {
+                    ForEach(UsagePopoverPane.allCases) { pane in
+                        Text(L10n.text(pane.localizationKey)).tag(pane)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 340)
+            }
 
             Spacer()
 
@@ -188,6 +202,17 @@ public struct SourceUsagePopoverView: View {
 
     private func loadedContent(notice: String?) -> some View {
         VStack(alignment: .leading, spacing: Layout.contentSpacing) {
+            if selectedPane == .quotaHistory, expectedSource == .codex {
+                UsageLimitHistoryView(history: viewModel.usageLimitHistory, source: .codex)
+            } else {
+                usageContent(notice: notice)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func usageContent(notice: String?) -> some View {
+        VStack(alignment: .leading, spacing: Layout.contentSpacing) {
             todaySummary
 
             VStack(alignment: .leading, spacing: 10) {
@@ -200,20 +225,12 @@ public struct SourceUsagePopoverView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                TokenHeatmap(
-                    source: expectedSource,
-                    usage: viewModel.dailyUsage,
-                    selectedDay: $viewModel.selectedDay,
-                    hoveredDay: $hoveredDay
-                )
+                TokenHeatmap(source: expectedSource, usage: viewModel.dailyUsage, selectedDay: $viewModel.selectedDay, hoveredDay: $hoveredDay)
             }
-
             selectedDayDetail
-
             Spacer(minLength: 0)
             footer(notice: notice)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var todaySummary: some View {

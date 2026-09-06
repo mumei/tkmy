@@ -18,6 +18,7 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
     public let refreshedAt: Date
     public let pricingUpdatedAt: Date?
     public let usageLimit: UsageLimitSnapshot?
+    public let usageLimitHistory: [UsageLimitSnapshot]
 
     public init(
         source: UsageSource,
@@ -25,7 +26,8 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         dailyModelUsage: [DailyModelUsage] = [],
         refreshedAt: Date = Date(),
         pricingUpdatedAt: Date? = nil,
-        usageLimit: UsageLimitSnapshot? = nil
+        usageLimit: UsageLimitSnapshot? = nil,
+        usageLimitHistory: [UsageLimitSnapshot] = []
     ) {
         self.source = source
         self.dailyUsage = dailyUsage
@@ -33,6 +35,7 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         self.refreshedAt = refreshedAt
         self.pricingUpdatedAt = pricingUpdatedAt
         self.usageLimit = usageLimit
+        self.usageLimitHistory = usageLimitHistory
     }
 }
 
@@ -69,6 +72,7 @@ public final class SourceUsageViewModel: ObservableObject {
     @Published public private(set) var lastSuccessfulUpdate: Date?
     @Published public private(set) var pricingUpdatedAt: Date?
     @Published public private(set) var usageLimit: UsageLimitSnapshot?
+    @Published public private(set) var usageLimitHistory: [UsageLimitSnapshot]
 
     private let calendar: Calendar
     private let loader: SourceUsageLoader?
@@ -86,6 +90,7 @@ public final class SourceUsageViewModel: ObservableObject {
         self.dailyModelUsage = []
         self.selectedDay = nil
         self.usageLimit = nil
+        self.usageLimitHistory = []
     }
 
     public func refresh() async {
@@ -104,19 +109,20 @@ public final class SourceUsageViewModel: ObservableObject {
     public func apply(_ result: SourceUsageLoadResult) {
         switch result {
         case let .ready(snapshot):
-            apply(snapshot: snapshot)
+            guard apply(snapshot: snapshot) else { return }
             phase = .ready
         case let .sourceMissing(locations):
             dailyUsage = []
             dailyModelUsage = []
             selectedDay = nil
             usageLimit = nil
+            usageLimitHistory = []
             phase = .sourceMissing(searchedLocations: locations)
         case let .partialFailure(snapshot, unreadableFileCount):
-            apply(snapshot: snapshot)
+            guard apply(snapshot: snapshot) else { return }
             phase = .partialFailure(unreadableFileCount: max(0, unreadableFileCount))
         case let .staleSource(snapshot, warning):
-            apply(snapshot: snapshot)
+            guard apply(snapshot: snapshot) else { return }
             phase = .staleSource(warning: warning)
         case let .unavailable(reason):
             setUnavailable(reason: reason)
@@ -177,10 +183,10 @@ public final class SourceUsageViewModel: ObservableObject {
         )
     }
 
-    private func apply(snapshot: SourceUsageSnapshot) {
+    private func apply(snapshot: SourceUsageSnapshot) -> Bool {
         guard snapshot.source == source else {
             setUnavailable(reason: L10n.text("source_mismatch"))
-            return
+            return false
         }
 
         dailyUsage = snapshot.dailyUsage
@@ -192,10 +198,14 @@ public final class SourceUsageViewModel: ObservableObject {
         lastSuccessfulUpdate = snapshot.refreshedAt
         pricingUpdatedAt = snapshot.pricingUpdatedAt
         usageLimit = snapshot.usageLimit
+        usageLimitHistory = snapshot.usageLimitHistory
+            .filter { $0.source == source }
+            .sorted { $0.observedAt < $1.observedAt }
 
         if selectedDay == nil {
             selectedDay = calendar.startOfDay(for: Date())
         }
+        return true
     }
 }
 

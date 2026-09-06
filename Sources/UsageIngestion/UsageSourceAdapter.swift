@@ -3,17 +3,20 @@ import UsageDomain
 
 public struct UsageParseResult: Sendable, Equatable {
     public let events: [NormalizedUsageEvent]
+    public let usageLimits: [UsageLimitSnapshot]
     public let consumedByteCount: Int
     public let remainder: Data
     public let malformedLineCount: Int
 
     public init(
         events: [NormalizedUsageEvent],
+        usageLimits: [UsageLimitSnapshot] = [],
         consumedByteCount: Int,
         remainder: Data,
         malformedLineCount: Int
     ) {
         self.events = events
+        self.usageLimits = usageLimits
         self.consumedByteCount = consumedByteCount
         self.remainder = remainder
         self.malformedLineCount = malformedLineCount
@@ -86,29 +89,45 @@ public enum IncrementalJSONLParser {
 struct JSONLUsageStreamBuffer {
     private var pending = Data()
     private var consumedByteCount = 0
+    private var discardingOversizedLine = false
+
+    init(discardingOversizedLine: Bool = false) {
+        self.discardingOversizedLine = discardingOversizedLine
+    }
 
     mutating func consume(
         _ data: Data,
         isFinal: Bool,
-        transform: ([String: Any]) -> NormalizedUsageEvent?
+        transform: ([String: Any]) -> NormalizedUsageEvent?,
+        limitTransform: (([String: Any]) -> [UsageLimitSnapshot])? = nil,
+        maxPendingLineBytes: Int? = nil
     ) -> UsageParseResult {
+        let previousPendingCount = pending.count
         pending.append(data)
         var events: [NormalizedUsageEvent] = []
+        var usageLimits: [UsageLimitSnapshot] = []
         var malformedLineCount = 0
         var lineStart = pending.startIndex
 
-        for newline in pending.indices where pending[newline] == 0x0A {
+        // The retained prefix has already been searched for newlines. Search
+        // only newly appended bytes to keep small chunks linear in file size.
+        for newline in pending.indices.dropFirst(previousPendingCount) where pending[newline] == 0x0A {
             var line = pending[lineStart..<newline]
             if line.last == 0x0D { line = line.dropLast() }
-            if !line.isEmpty {
+            if discardingOversizedLine {
+                discardingOversizedLine = false
+            } else if !line.isEmpty, maxPendingLineBytes == nil || line.count <= maxPendingLineBytes! {
                 autoreleasepool {
                     let bytes = Data(line)
                     if let object = IngestionSupport.jsonObject(bytes) {
                         if let event = transform(object) { events.append(event) }
+                        if let limitTransform { usageLimits.append(contentsOf: limitTransform(object)) }
                     } else {
                         malformedLineCount += 1
                     }
                 }
+            } else if !line.isEmpty {
+                malformedLineCount += 1
             }
             lineStart = pending.index(after: newline)
         }
@@ -117,13 +136,22 @@ struct JSONLUsageStreamBuffer {
         consumedByteCount += consumedNow
         pending = Data(pending[lineStart...])
 
+        if let maxPendingLineBytes, maxPendingLineBytes > 0,
+           pending.count > maxPendingLineBytes {
+            if !discardingOversizedLine { malformedLineCount += 1 }
+            discardingOversizedLine = true
+            consumedByteCount += pending.count
+            pending.removeAll(keepingCapacity: false)
+        }
+
         // A closed transcript may contain a valid final JSON object without a newline.
         // Keep an invalid tail so a writer can finish it during the next refresh.
-        if isFinal, !pending.isEmpty {
+        if isFinal, !pending.isEmpty, !discardingOversizedLine {
             var finalized = false
             autoreleasepool {
                 if let object = IngestionSupport.jsonObject(pending) {
                     if let event = transform(object) { events.append(event) }
+                    if let limitTransform { usageLimits.append(contentsOf: limitTransform(object)) }
                     finalized = true
                 }
             }
@@ -135,6 +163,7 @@ struct JSONLUsageStreamBuffer {
 
         return UsageParseResult(
             events: events,
+            usageLimits: usageLimits,
             consumedByteCount: consumedByteCount,
             remainder: pending,
             malformedLineCount: malformedLineCount

@@ -132,3 +132,106 @@ import UsageDomain
         #expect(final.consumedByteCount + final.remainder.count == data.count)
     }
 }
+
+@Test func codexQuotaParserAcceptsNullInfoAndBothWindows() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let data = Data("""
+    {"timestamp":"2026-06-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":17,"window_minutes":300,"resets_at":1780000300},"secondary":{"usedPercent":42,"windowDurationMins":10080,"resetsAt":1780600000}}}}
+    """.utf8)
+
+    let result = CodexUsageLimitParser(now: now).consume(data, isFinal: true)
+    #expect(result.events.isEmpty)
+    #expect(result.usageLimits.count == 2)
+    #expect(result.usageLimits.map(\.windowMinutes).sorted() == [300, 10_080])
+    #expect(Set(result.usageLimits.map(\.limitID)) == ["codex"])
+}
+
+@Test func codexQuotaParserFiltersHistoryBoundaryAndFuture() throws {
+    let now = Date(timeIntervalSince1970: 1_735_689_600) // 2025-01-01T00:00:00Z
+    let cutoff = UsageLimitHistoryPolicy.cutoff(relativeTo: now)
+    let old = ISO8601DateFormatter().string(from: cutoff.addingTimeInterval(-1))
+    let boundary = ISO8601DateFormatter().string(from: cutoff)
+    let future = ISO8601DateFormatter().string(from: now.addingTimeInterval(1))
+    let line: (String, Int) -> String = { ts, used in
+        "{\"timestamp\":\"\(ts)\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"limit_id\":\"codex\",\"primary\":{\"used_percent\":\(used),\"window_minutes\":10080}}}}"
+    }
+    let data = Data(([line(old, 1), line(boundary, 2), line(future, 3)] as [String]).joined(separator: "\n").utf8)
+    let result = CodexUsageLimitParser(now: now).consume(data, isFinal: true)
+    #expect(result.usageLimits.count == 1)
+    #expect((try #require(result.usageLimits.first)).usedPercent == 2)
+    #expect((try #require(result.usageLimits.first)).observedAt == cutoff)
+}
+
+@Test func codexQuotaParserHandlesChunksTrailingLineAndSkipsHugeLine() throws {
+    let valid = "{\"timestamp\":\"2026-06-01T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"limitId\":\"codex\",\"primary\":{\"usedPercent\":9,\"windowMinutes\":10080}}}}"
+    let huge = "{\"padding\":\"" + String(repeating: "x", count: 1_048_577) + "\"}"
+    let data = Data((huge + "\n" + valid).utf8)
+    let parser = CodexUsageLimitParser(now: Date(timeIntervalSince1970: 1_800_000_000))
+    var observedLimits: [UsageLimitSnapshot] = []
+    var malformedLines = 0
+    var offset = 0
+    while offset < data.count {
+        let end = min(data.count, offset + 257)
+        let result = parser.consume(Data(data[offset..<end]), isFinal: false)
+        observedLimits.append(contentsOf: result.usageLimits)
+        malformedLines += result.malformedLineCount
+        offset = end
+    }
+    let final = parser.consume(Data(), isFinal: true)
+    observedLimits.append(contentsOf: final.usageLimits)
+    malformedLines += final.malformedLineCount
+    #expect(observedLimits.count == 1)
+    #expect((try #require(observedLimits.first)).usedPercent == 9)
+    #expect(malformedLines >= 1)
+    #expect(final.remainder.isEmpty)
+    #expect(final.consumedByteCount == data.count)
+}
+
+@Test func codexQuotaParserDoesNotParseSuffixOfOversizedLine() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let quota = "{\"timestamp\":\"2026-06-01T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"limit_id\":\"codex\",\"primary\":{\"used_percent\":7,\"window_minutes\":10080}}}}"
+    let oversized = String(repeating: "x", count: 1_048_577) + quota
+    let valid = quota.replacingOccurrences(of: "7,", with: "8,")
+    let parser = CodexUsageLimitParser(now: now)
+    let result = parser.consume(Data((oversized + "\n" + valid).utf8), isFinal: true)
+    #expect(result.usageLimits.count == 1)
+    #expect((try #require(result.usageLimits.first)).usedPercent == 8)
+    #expect(result.malformedLineCount == 1)
+}
+
+@Test func codexQuotaParserRejectsInvalidNumericQuotaValues() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let data = Data("""
+    {"timestamp":"2026-06-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":true,"window_minutes":1.5}}}}
+    {"timestamp":"2026-06-01T00:00:01Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":17,"window_minutes":0}}}}
+    {"timestamp":"2026-06-01T00:00:02Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":18,"window_minutes":10080,"resets_at":null}}}}
+    """.utf8)
+    let result = CodexUsageLimitParser(now: now).consume(data, isFinal: true)
+    #expect(result.usageLimits.count == 1)
+    #expect((try #require(result.usageLimits.first)).usedPercent == 18)
+    #expect((try #require(result.usageLimits.first)).resetsAt == nil)
+}
+
+@Test func codexQuotaParserCanResumeInsideDiscardedOversizedLine() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let quota = "{\"timestamp\":\"2026-06-01T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"limit_id\":\"codex\",\"primary\":{\"used_percent\":9,\"window_minutes\":10080}}}}"
+    let parser = CodexUsageLimitParser(now: now)
+    let first = parser.consume(Data(String(repeating: "x", count: 1_048_577).utf8), isFinal: false)
+    #expect(first.usageLimits.isEmpty)
+    let resumed = CodexUsageLimitParser(now: now, startsInsideLine: true)
+    let result = resumed.consume(Data((quota + "\n" + quota).utf8), isFinal: true)
+    #expect(result.usageLimits.count == 1)
+    #expect(result.malformedLineCount == 0)
+}
+
+@Test func codexQuotaParserRejectsUnrepresentableWindowsAndSanitizesResetDates() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let data = Data("""
+    {"timestamp":"2026-06-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":17,"window_minutes":9223372036854775808}}}}
+    {"timestamp":"2026-06-01T00:00:01Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":18,"window_minutes":10080,"resets_at":1e300}}}}
+    """.utf8)
+    let result = CodexUsageLimitParser(now: now).consume(data, isFinal: true)
+    #expect(result.usageLimits.count == 1)
+    #expect(try #require(result.usageLimits.first).resetsAt == nil)
+    #expect(CodexAdapter().latestUsageLimit(in: data)?.resetsAt == nil)
+}
