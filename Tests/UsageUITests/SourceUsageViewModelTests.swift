@@ -239,9 +239,12 @@ import UsageDomain
     #expect(UsageLimitHistoryTimeline.segments(observations).map(\.count) == [2, 1])
 }
 
-@Test func quotaHistoryHasEmptyStateForAbsentOrOutOfPeriodObservations() {
+@Test func quotaHistoryHasEmptyStateWithoutObservationsOrUsableReference() {
     let now = Date(timeIntervalSince1970: 1_760_000_000)
-    let old = quota(observedAt: now.addingTimeInterval(-(31 * 24 * 60 * 60)))
+    let old = quota(
+        observedAt: now.addingTimeInterval(-(31 * 24 * 60 * 60)),
+        resetsAt: now.addingTimeInterval(-(31 * 24 * 60 * 60) + 300 * 60)
+    )
     #expect(UsageLimitHistoryTimeline.buckets(from: [], source: .codex, range: .sevenDays, now: now).isEmpty)
     #expect(UsageLimitHistoryTimeline.buckets(from: [old], source: .codex, range: .thirtyDays, now: now).isEmpty)
 }

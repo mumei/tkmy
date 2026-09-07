@@ -59,7 +59,7 @@ struct UsageLimitHistoryView: View {
         )
     }
     private var lastConfirmedAt: Date? {
-        observations.map(\.lastObservedAt).filter { $0 <= now }.max()
+        chartObservations.map(\.lastObservedAt).filter { $0 <= now }.max()
     }
     private var chartObservations: [UsageLimitSnapshot] {
         guard let selectedBucket else { return [] }
@@ -119,7 +119,7 @@ struct UsageLimitHistoryView: View {
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .reportQuotaFrame(.windowPicker)
-                if observations.isEmpty {
+                if chartObservations.isEmpty {
                     ContentUnavailableView(
                         L10n.text("quota_history_empty_title"),
                         systemImage: "calendar.badge.exclamationmark",
@@ -242,6 +242,13 @@ struct UsageLimitHistoryView: View {
 
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
+                    if observations.isEmpty {
+                        Text(L10n.text("quota_history_period_empty"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    }
                     ForEach(observations.reversed()) { observation in
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 1) {

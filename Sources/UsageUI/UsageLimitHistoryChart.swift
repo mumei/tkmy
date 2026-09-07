@@ -64,7 +64,7 @@ struct UsageLimitHistoryChart: View {
         GeometryReader { _ in
             let cutoff = now.addingTimeInterval(-range.interval)
             let ticks = UsageLimitHistoryChartAxis.tickDates(for: range, now: now)
-            let segments = UsageLimitHistoryTimeline.segments(observations)
+            let series = UsageLimitHistoryChartSeries.make(observations: observations, range: range, now: now)
             Canvas { context, size in
                 let chartRect = CGRect(
                     x: 30,
@@ -83,14 +83,7 @@ struct UsageLimitHistoryChart: View {
 
                 var plotContext = context
                 plotContext.clip(to: Path(chartRect))
-                for segment in segments where !segment.isEmpty {
-                    drawSegment(
-                        segment,
-                        in: &plotContext,
-                        cutoff: cutoff,
-                        chartRect: chartRect
-                    )
-                }
+                drawSeries(series, in: &plotContext, cutoff: cutoff, chartRect: chartRect)
 
                 for (index, tick) in ticks.enumerated() {
                     let x = xPosition(tick, cutoff: cutoff, in: chartRect)
@@ -125,45 +118,39 @@ struct UsageLimitHistoryChart: View {
         }
     }
 
-    private func drawSegment(
-        _ segment: [UsageLimitSnapshot],
+    private func drawSeries(
+        _ series: UsageLimitHistoryChartSeries,
         in context: inout GraphicsContext,
         cutoff: Date,
         chartRect: CGRect
     ) {
         var path = Path()
-        var hasPoint = false
-        for observation in segment {
-            guard observation.lastObservedAt <= now else { continue }
-            let start = CGPoint(
-                x: xPosition(observation.observedAt, cutoff: cutoff, in: chartRect),
-                y: yPosition(observation.remainingPercent, in: chartRect)
-            )
-            let end = CGPoint(
-                x: xPosition(observation.lastObservedAt, cutoff: cutoff, in: chartRect),
-                y: yPosition(observation.remainingPercent, in: chartRect)
-            )
-            if hasPoint { path.addLine(to: start) } else {
-                path.move(to: start)
-                hasPoint = true
-            }
-            path.addLine(to: end)
+        for stroke in series.strokes {
+            path.move(to: point(stroke.start, cutoff: cutoff, in: chartRect))
+            path.addLine(to: point(stroke.end, cutoff: cutoff, in: chartRect))
         }
+        // Reference connections share the requested solid line style; only
+        // real observations receive markers or enter the table/calculations.
         context.stroke(path, with: .color(.accentColor), lineWidth: 2)
 
-        for observation in segment {
-            for date in [observation.observedAt, observation.lastObservedAt]
-                where date >= cutoff && date <= now {
-                let point = CGPoint(
-                    x: xPosition(date, cutoff: cutoff, in: chartRect),
-                    y: yPosition(observation.remainingPercent, in: chartRect)
-                )
-                context.fill(
-                    Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)),
-                    with: .color(.accentColor)
-                )
-            }
+        for observation in series.observations {
+            let point = point(observation, cutoff: cutoff, in: chartRect)
+            context.fill(
+                Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)),
+                with: .color(.accentColor)
+            )
         }
+    }
+
+    private func point(
+        _ point: UsageLimitHistoryChartSeries.Point,
+        cutoff: Date,
+        in rect: CGRect
+    ) -> CGPoint {
+        CGPoint(
+            x: xPosition(point.date, cutoff: cutoff, in: rect),
+            y: yPosition(point.remainingPercent, in: rect)
+        )
     }
 
     /// Deliberately leaves values outside 0...1 untouched. Canvas clips the

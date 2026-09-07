@@ -445,6 +445,8 @@ private func quotaHistoryRenderFixture(now: Date) -> [UsageLimitSnapshot] {
         observation(-28 * day, used: 14, epoch: "old"), // visible long-range gap
         observation(-12 * 60 * 60, lastOffset: -9 * 60 * 60 - 45 * 60, used: 24, epoch: "old"),
         observation(-9 * 60 * 60 - 30 * 60, used: 4, epoch: "reset"), // reset break
+        // A real confirmed run followed by a five-hour observation gap.
+        observation(-8 * 60 * 60, lastOffset: -7.5 * 60 * 60, used: 6, epoch: "recent"),
         // A continuous recent sequence: 3.857 percentage points in 2h15m.
         observation(-150 * 60, used: 10, epoch: "recent"),
         observation(-120 * 60, used: 10.8, epoch: "recent"),

@@ -46,7 +46,7 @@ import UsageDomain
     #expect(UsageLimitHistoryChartAxis.tickDates(for: .thirtyDays, now: now).count == 5)
 }
 
-@Test func chartIncludesOnlyAContinuousOutsideRangePredecessor() {
+@Test func chartIncludesARealOutsideRangePredecessor() {
     let now = Date(timeIntervalSince1970: 1_760_000_000)
     let cutoff = now.addingTimeInterval(-UsageLimitHistoryRange.oneHour.interval)
     let predecessor = quotaRangeObservation(
@@ -73,7 +73,7 @@ import UsageDomain
     #expect(chart == [predecessor, visible])
 }
 
-@Test func chartRejectsDisconnectedResetRecoveryAndMismatchedSourcePredecessors() {
+@Test func chartRejectsResetRecoveryAndMismatchedSourcePredecessors() {
     let now = Date(timeIntervalSince1970: 1_760_000_000)
     let cutoff = now.addingTimeInterval(-UsageLimitHistoryRange.oneHour.interval)
     let visible = quotaRangeObservation(
@@ -90,7 +90,6 @@ import UsageDomain
         )
     }
     let cases = [
-        outside(-40 * 60, 90, "epoch-a", .codex), // >30-minute confirmation gap
         outside(-10 * 60, 90, "epoch-b", .codex), // reset epoch changed
         outside(-10 * 60, 70, "epoch-a", .codex), // remaining quota recovered
         outside(-10 * 60, 90, "epoch-a", .claudeCode),
@@ -102,6 +101,44 @@ import UsageDomain
         )
         #expect(chart == [visible])
     }
+}
+
+@Test func chartIncludesOutsidePredecessorAcrossLongGapWithoutAddingTableRows() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let cutoff = now.addingTimeInterval(-UsageLimitHistoryRange.oneHour.interval)
+    let predecessor = quotaRangeObservation(
+        observedAt: cutoff.addingTimeInterval(-40 * 60), remaining: 90, epoch: "same"
+    )
+    let visible = quotaRangeObservation(
+        observedAt: cutoff.addingTimeInterval(10 * 60), remaining: 80, epoch: "same"
+    )
+    let bucket = UsageLimitHistoryBucket(visible)
+    let history = [predecessor, visible]
+    #expect(UsageLimitHistoryTimeline.chartObservations(
+        from: history, source: .codex, bucket: bucket, range: .oneHour, now: now
+    ) == history)
+    #expect(UsageLimitHistoryTimeline.observations(
+        from: history, source: .codex, bucket: bucket, range: .oneHour, now: now
+    ) == [visible])
+    // Display interpolation must not redefine measured continuity.
+    #expect(UsageLimitHistoryTimeline.segments(history).count == 2)
+}
+
+@Test func chartCanShowLatestValueReferenceWithNoObservationInsideRange() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let previous = quotaRangeObservation(
+        observedAt: now.addingTimeInterval(-90 * 60), remaining: 80
+    )
+    let bucket = UsageLimitHistoryBucket(previous)
+    #expect(UsageLimitHistoryTimeline.chartObservations(
+        from: [previous], source: .codex, bucket: bucket, range: .oneHour, now: now
+    ) == [previous])
+    #expect(UsageLimitHistoryTimeline.buckets(
+        from: [previous], source: .codex, range: .oneHour, now: now
+    ) == [bucket])
+    #expect(UsageLimitHistoryTimeline.observations(
+        from: [previous], source: .codex, bucket: bucket, range: .oneHour, now: now
+    ).isEmpty)
 }
 
 @Test func chartKeepsRealBoundaryEndpointsAndDoesNotExtrapolateToNow() throws {

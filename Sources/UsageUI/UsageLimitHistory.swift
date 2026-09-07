@@ -41,8 +41,8 @@ struct UsageLimitHistoryBucket: Hashable, Identifiable {
 }
 
 enum UsageLimitHistoryTimeline {
-    /// A provider sample gap beyond 30 minutes means its intervening values are
-    /// unknown, so the chart deliberately leaves a visible break.
+    /// Gaps beyond 30 minutes break measured continuity. Chart-only reference
+    /// connections do not change this limit for consumption calculations.
     static let maximumConnectedGap = UsageLimitHistoryPolicy.maximumContinuousGap
 
     static func observations(
@@ -61,8 +61,8 @@ enum UsageLimitHistoryTimeline {
             .sorted { $0.observedAt < $1.observedAt }
     }
 
-    /// Returns the chart's in-range observations and, when it is demonstrably
-    /// continuous, the one real sample immediately before the selected range.
+    /// Returns the chart's in-range observations and a compatible real sample
+    /// immediately before the selected range, including across a missing span.
     /// The table deliberately uses `observations` instead, so this predecessor
     /// is never presented as an in-range row.
     static func chartObservations(
@@ -79,8 +79,6 @@ enum UsageLimitHistoryTimeline {
             range: range,
             now: now
         )
-        guard let firstVisible = visible.first else { return [] }
-
         let cutoff = now.addingTimeInterval(-range.interval)
         let relevant = history
             .filter {
@@ -92,13 +90,20 @@ enum UsageLimitHistoryTimeline {
                 if lhs.observedAt != rhs.observedAt { return lhs.observedAt < rhs.observedAt }
                 return lhs.lastObservedAt < rhs.lastObservedAt
             }
+        guard let firstVisible = visible.first else {
+            guard let latest = relevant.last,
+                  !UsageLimitHistoryChartSeries.make(
+                      observations: [latest], range: range, now: now
+                  ).strokes.isEmpty else { return [] }
+            return [latest]
+        }
         guard let firstVisibleIndex = relevant.firstIndex(of: firstVisible), firstVisibleIndex > 0 else {
             return visible
         }
 
         let predecessor = relevant[firstVisibleIndex - 1]
         guard predecessor.lastObservedAt < cutoff,
-              canConnect(predecessor, to: firstVisible) else {
+              canConnect(predecessor, to: firstVisible, maximumGap: .infinity) else {
             return visible
         }
         return [predecessor] + visible
@@ -110,11 +115,14 @@ enum UsageLimitHistoryTimeline {
         range: UsageLimitHistoryRange,
         now: Date
     ) -> [UsageLimitHistoryBucket] {
-        return Array(Set(history.compactMap { observation in
+        let candidates = Set(history.compactMap { observation -> UsageLimitHistoryBucket? in
             guard observation.source == source,
-                  intersectsDisplayedRange(observation, range: range, now: now) else { return nil }
+                  isFiniteConfirmedRun(observation, through: now) else { return nil }
             return UsageLimitHistoryBucket(observation)
-        }))
+        })
+        return candidates.filter {
+            !chartObservations(from: history, source: source, bucket: $0, range: range, now: now).isEmpty
+        }
         .sorted { lhs, rhs in
             if lhs.windowMinutes != rhs.windowMinutes { return lhs.windowMinutes < rhs.windowMinutes }
             return lhs.limitID.localizedStandardCompare(rhs.limitID) == .orderedAscending
@@ -143,13 +151,16 @@ enum UsageLimitHistoryTimeline {
             ?? buckets.max { $0.windowMinutes < $1.windowMinutes }
     }
 
-    static func segments(_ observations: [UsageLimitSnapshot]) -> [[UsageLimitSnapshot]] {
+    static func segments(
+        _ observations: [UsageLimitSnapshot],
+        maximumGap: TimeInterval = maximumConnectedGap
+    ) -> [[UsageLimitSnapshot]] {
         var result: [[UsageLimitSnapshot]] = []
         var resetState: SegmentResetState?
 
         for observation in observations.sorted(by: { $0.observedAt < $1.observedAt }) {
             guard let previous = result.last?.last,
-                  canConnectIgnoringLegacyEpochHistory(previous, to: observation),
+                  canConnectIgnoringLegacyEpochHistory(previous, to: observation, maximumGap: maximumGap),
                   resetState?.canContinue(with: observation) == true,
                   observation.remainingPercent <= previous.remainingPercent else {
                 result.append([observation])
@@ -177,8 +188,12 @@ enum UsageLimitHistoryTimeline {
             && observation.lastObservedAt <= now
     }
 
-    private static func canConnect(_ previous: UsageLimitSnapshot, to candidate: UsageLimitSnapshot) -> Bool {
-        guard canConnectIgnoringLegacyEpochHistory(previous, to: candidate),
+    private static func canConnect(
+        _ previous: UsageLimitSnapshot,
+        to candidate: UsageLimitSnapshot,
+        maximumGap: TimeInterval = maximumConnectedGap
+    ) -> Bool {
+        guard canConnectIgnoringLegacyEpochHistory(previous, to: candidate, maximumGap: maximumGap),
               candidate.remainingPercent <= previous.remainingPercent else { return false }
 
         if let epochID = previous.resetEpochID { return candidate.resetEpochID == epochID }
@@ -193,9 +208,10 @@ enum UsageLimitHistoryTimeline {
 
     private static func canConnectIgnoringLegacyEpochHistory(
         _ previous: UsageLimitSnapshot,
-        to candidate: UsageLimitSnapshot
+        to candidate: UsageLimitSnapshot,
+        maximumGap: TimeInterval
     ) -> Bool {
-        candidate.observedAt.timeIntervalSince(previous.lastObservedAt) <= maximumConnectedGap
+        candidate.observedAt.timeIntervalSince(previous.lastObservedAt) <= maximumGap
             && candidate.observedAt >= previous.lastObservedAt
             && candidate.source == previous.source
             && UsageLimitHistoryBucket(candidate) == UsageLimitHistoryBucket(previous)

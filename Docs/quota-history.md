@@ -77,12 +77,20 @@ record an observation, the app cannot reconstruct that missing value.
 
 ## Display
 
-The chart plots confirmed runs on a fixed 0–100% scale, extending each constant
-run only to its last actual confirmation. Lines are split when the quota
-bucket/window or reset epoch changes, remaining allowance rises, or the next
-observation is more than thirty minutes after the previous confirmation. The
-one-second reset jitter does not split a confirmed epoch. Missing periods are
-not filled with synthetic zero, 100%, or invented observations.
+The chart plots confirmed runs on a fixed 0–100% scale. Solid lines cover each
+run from `observedAt` through `lastObservedAt`, and only actual endpoints
+receive filled markers. Within the same source, bucket, and reset epoch, a
+solid reference line connects separate actual runs or points when there is no
+recovery, including gaps longer than thirty minutes. The latest observed value
+may extend forward as a solid reference line to the current time, capped at a
+known upcoming reset. The chart never extrapolates backward.
+
+Lines break when the quota bucket/window or reset epoch changes, or when the
+remaining allowance recovers; no diagonal line joins a reset or recovery. The
+one-second reset jitter does not split a confirmed epoch. These visual
+references do not create observations: missing periods are not written as
+synthetic zero, 100%, or other values, and they do not count toward token pace
+or its rate endpoints.
 
 The selectors, chart, compact token reference, and table header stay fixed.
 Only the table rows scroll vertically. The chart has a grid and labels at
@@ -110,9 +118,9 @@ Model-specific allowances never join the general Codex allowance.
 The estimate uses the latest continuous segment in the selected range. Its
 actual first and last change timestamps and percentage-point drop define the
 comparison interval. A constant run's last-confirmed time is used to check
-continuity, never as the timestamp of a future drop. The calculation never
-extends to the current clock. The time-based pace helper remains internal;
-the user-facing reference is tokens per 1%.
+continuity, never as the timestamp of a future drop. Chart reference lines may
+extend to the current clock, but the calculation does not. The time-based pace
+helper remains internal; the user-facing reference is tokens per 1%.
 
 Both rate endpoints must be actual observations inside the chosen range. A
 chart boundary cannot create a rate baseline. Resets, recoveries, gaps over
