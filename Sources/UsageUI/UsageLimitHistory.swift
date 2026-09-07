@@ -103,7 +103,8 @@ enum UsageLimitHistoryTimeline {
 
         let predecessor = relevant[firstVisibleIndex - 1]
         guard predecessor.lastObservedAt < cutoff,
-              canConnect(predecessor, to: firstVisible, maximumGap: .infinity) else {
+              canConnect(predecessor, to: firstVisible, maximumGap: .infinity)
+                || UsageLimitHistoryChartSeries.canBridgeStorageGap(predecessor, to: firstVisible) else {
             return visible
         }
         return [predecessor] + visible

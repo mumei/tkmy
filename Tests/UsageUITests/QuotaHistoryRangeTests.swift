@@ -141,6 +141,24 @@ import UsageDomain
     ).isEmpty)
 }
 
+@Test func chartIncludesSameResetPredecessorWithGapGeneratedEpochID() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let reset = now.addingTimeInterval(6 * 24 * 60 * 60)
+    let history = [(-100 * 60.0, "before-gap"), (-10 * 60.0, "after-gap")].map { offset, epoch in
+        UsageLimitSnapshot(
+            source: .codex, limitID: "codex", usedPercent: 44, windowMinutes: 10_080,
+            resetsAt: reset, observedAt: now.addingTimeInterval(offset), resetEpochID: epoch
+        )
+    }
+    let bucket = UsageLimitHistoryBucket(history[0])
+    #expect(UsageLimitHistoryTimeline.chartObservations(
+        from: history, source: .codex, bucket: bucket, range: .oneHour, now: now
+    ) == history)
+    #expect(UsageLimitHistoryTimeline.observations(
+        from: history, source: .codex, bucket: bucket, range: .oneHour, now: now
+    ) == [history[1]])
+}
+
 @Test func chartKeepsRealBoundaryEndpointsAndDoesNotExtrapolateToNow() throws {
     let now = Date(timeIntervalSince1970: 1_760_000_000)
     let cutoff = now.addingTimeInterval(-UsageLimitHistoryRange.oneHour.interval)

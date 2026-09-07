@@ -85,6 +85,13 @@ recovery, including gaps longer than thirty minutes. The latest observed value
 may extend forward as a solid reference line to the current time, capped at a
 known upcoming reset. The chart never extrapolates backward.
 
+Storage assigns a new epoch ID after a reporting gap, even when no reset
+occurred. A chart reference may bridge these different IDs across a gap longer
+than thirty minutes when both reported reset times match within one second,
+neither reset falls inside the gap, and remaining allowance did not recover.
+Unknown or changed reset times do not qualify for this exception. The original
+epoch IDs and measured-continuity segments remain unchanged.
+
 Lines break when the quota bucket/window or reset epoch changes, or when the
 remaining allowance recovers; no diagonal line joins a reset or recovery. The
 one-second reset jitter does not split a confirmed epoch. These visual

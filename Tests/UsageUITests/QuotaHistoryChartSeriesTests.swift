@@ -36,6 +36,47 @@ import UsageDomain
     ])
 }
 
+@Test func quotaHistorySeriesBridgesEpochIDsCreatedByReportingGaps() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let reset = now.addingTimeInterval(6 * 24 * 60 * 60)
+    let history = [
+        seriesQuota(observedAt: now.addingTimeInterval(-4 * 60 * 60 - 240),
+                    lastObservedAt: now.addingTimeInterval(-4 * 60 * 60),
+                    remaining: 56, reset: reset, epoch: "before-gap"),
+        seriesQuota(observedAt: now.addingTimeInterval(-100 * 60),
+                    lastObservedAt: now.addingTimeInterval(-97 * 60),
+                    remaining: 56, reset: reset, epoch: "after-first-gap"),
+        seriesQuota(observedAt: now.addingTimeInterval(-10 * 60),
+                    lastObservedAt: now.addingTimeInterval(-2 * 60),
+                    remaining: 56, reset: reset, epoch: "after-second-gap"),
+    ]
+    let series = UsageLimitHistoryChartSeries.make(observations: history, range: .sixHours, now: now)
+    for (previous, next) in zip(history, history.dropFirst()) {
+        #expect(series.strokes.contains(seriesStroke(
+            previous.lastObservedAt, next.observedAt, 56, 56, .interpolated
+        )))
+    }
+    // Storage epoch breaks still define measured continuity for token pace.
+    #expect(UsageLimitHistoryTimeline.segments(history).count == 3)
+}
+
+@Test func storageGapBridgeRequiresMatchingKnownResetWithoutRecovery() {
+    let now = Date(timeIntervalSince1970: 1_760_000_000)
+    let reset = now.addingTimeInterval(6 * 24 * 60 * 60)
+    let previous = seriesQuota(observedAt: now.addingTimeInterval(-50 * 60), remaining: 56,
+                               reset: reset, epoch: "before-gap")
+    let changedReset = seriesQuota(observedAt: now.addingTimeInterval(-5 * 60), remaining: 56,
+                                   reset: reset.addingTimeInterval(15), epoch: "real-reset-change")
+    let recovered = seriesQuota(observedAt: now.addingTimeInterval(-5 * 60), remaining: 57,
+                                reset: reset, epoch: "recovered")
+    let unknownReset = seriesQuota(observedAt: now.addingTimeInterval(-5 * 60), remaining: 56,
+                                   epoch: "unknown-reset")
+    for next in [changedReset, recovered, unknownReset] {
+        let series = UsageLimitHistoryChartSeries.make(observations: [previous, next], range: .oneHour, now: now)
+        #expect(!series.strokes.contains { $0.style == .interpolated })
+    }
+}
+
 @Test func quotaHistorySeriesDoesNotJoinDiscontinuousRuns() {
     let now = Date(timeIntervalSince1970: 1_760_000_000)
     let base = now.addingTimeInterval(-50 * 60)

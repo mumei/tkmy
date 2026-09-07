@@ -58,6 +58,18 @@ struct UsageLimitHistoryChartSeries {
             }
         }
 
+        // Storage starts a new epoch after a reporting gap as well as after a
+        // reset. Matching reported reset times let the chart bridge only that
+        // gap without changing the stricter measured-continuity segments.
+        for (previous, candidate) in zip(valid, valid.dropFirst())
+            where canBridgeStorageGap(previous, to: candidate) {
+            allStrokes.append(Stroke(
+                start: Point(date: previous.lastObservedAt, remainingPercent: previous.remainingPercent),
+                end: Point(date: candidate.observedAt, remainingPercent: candidate.remainingPercent),
+                style: .interpolated
+            ))
+        }
+
         if let latest = valid.max(by: { lhs, rhs in
             if lhs.lastObservedAt != rhs.lastObservedAt { return lhs.lastObservedAt < rhs.lastObservedAt }
             return lhs.observedAt < rhs.observedAt
@@ -83,6 +95,26 @@ struct UsageLimitHistoryChartSeries {
         return Self(
             strokes: allStrokes.filter { intersectsDisplayedRange($0, cutoff: cutoff, now: now) },
             observations: displayedObservations
+        )
+    }
+
+    static func canBridgeStorageGap(_ previous: UsageLimitSnapshot, to candidate: UsageLimitSnapshot) -> Bool {
+        guard let previousEpoch = previous.resetEpochID,
+              let candidateEpoch = candidate.resetEpochID,
+              previousEpoch != candidateEpoch,
+              candidate.observedAt.timeIntervalSince(previous.lastObservedAt) > UsageLimitHistoryPolicy.maximumContinuousGap,
+              previous.source == candidate.source,
+              UsageLimitHistoryBucket(previous) == UsageLimitHistoryBucket(candidate),
+              candidate.remainingPercent <= previous.remainingPercent,
+              let previousReset = previous.resetsAt,
+              let candidateReset = candidate.resetsAt,
+              previousReset.timeIntervalSinceReferenceDate.isFinite,
+              candidateReset.timeIntervalSinceReferenceDate.isFinite,
+              abs(candidateReset.timeIntervalSince(previousReset)) <= UsageLimitHistoryPolicy.resetJitterTolerance else {
+            return false
+        }
+        return !hasKnownReset(
+            between: previous.lastObservedAt, and: candidate.observedAt, observations: [previous, candidate]
         )
     }
 
