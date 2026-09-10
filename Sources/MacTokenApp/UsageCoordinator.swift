@@ -13,13 +13,20 @@ actor UsageCoordinator {
     private static let quotaTokenCoverageSignature = "quota-token-coverage:v1"
     private static let readChunkSize = 1_048_576
     private static let codexStateLookbackBytes: UInt64 = 4 * 1_048_576
+    private static let accountRateLimitRefreshInterval: TimeInterval = 60
+    private static let accountRateLimitStaleInterval: TimeInterval = 10 * 60
     private let store: SQLiteUsageStore
     private let calculator: UsagePriceCalculator
     private let quotaHistoryImporter: CodexUsageLimitHistoryImporter
+    private let codexAccountRateLimits = CodexAccountRateLimitProvider()
     private let codex = CodexAdapter()
     private let claude = ClaudeCodeAdapter()
     private var scanTask: Task<Void, Never>?
     private var inFlightLoads: [UsageSource: Task<SourceUsageLoadResult, Error>] = [:]
+    private var usageReportCaches: [UsageSource: UsageReportCache] = [:]
+    private var accountRateLimitAttemptedAt: Date?
+    private var accountRateLimitSucceededAt: Date?
+    private var cachedAccountRateLimits: [UsageLimitSnapshot] = []
 
     init(store: SQLiteUsageStore, calculator: UsagePriceCalculator) {
         self.store = store
@@ -41,6 +48,8 @@ actor UsageCoordinator {
         let loadStartedAt = Date()
         let adapter: any UsageSourceAdapter = source == .codex ? codex : claude
         let files = try adapter.discoverLogFiles()
+        var requiresFullUsageRebuild = usageReportCaches[source] == nil
+        var earliestUsageChange: Date?
         let existingCoverageStartedAt = source == .codex
             ? try await quotaTokenCoverageStartedAt()
             : nil
@@ -88,6 +97,11 @@ actor UsageCoordinator {
                         permitsIncompleteVersion: source == .codex
                     )
                 } ?? false
+                if cursor != nil, !isAppend {
+                    // A rewritten or truncated transcript may have removed
+                    // events from any day previously attributed to this file.
+                    requiresFullUsageRebuild = true
+                }
                 let priorIncomplete = isAppend && cursor?.parserVersion == -parserVersion
                 let newBytesOffset = isAppend ? min(cursor?.byteOffset ?? 0, size) : 0
                 let parserStart: UInt64
@@ -116,6 +130,10 @@ actor UsageCoordinator {
                     let result = parser.consume(chunk, isFinal: false)
                     unreadable += result.malformedLineCount
                     fileMalformedLineCount += result.malformedLineCount
+                    earliestUsageChange = Self.earliestDate(
+                        earliestUsageChange,
+                        among: result.events
+                    )
                     try await store.upsert(result.events)
                     if !result.usageLimits.isEmpty {
                         try await store.upsertUsageLimits(result.usageLimits, now: Date())
@@ -124,6 +142,10 @@ actor UsageCoordinator {
                 let finalResult = parser.consume(Data(), isFinal: true)
                 unreadable += finalResult.malformedLineCount
                 fileMalformedLineCount += finalResult.malformedLineCount
+                earliestUsageChange = Self.earliestDate(
+                    earliestUsageChange,
+                    among: finalResult.events
+                )
                 try await store.upsert(finalResult.events)
                 if !finalResult.usageLimits.isEmpty {
                     try await store.upsertUsageLimits(finalResult.usageLimits, now: Date())
@@ -160,11 +182,18 @@ actor UsageCoordinator {
             unreadable += progress.unreadableFiles
         }
 
-        let usageLimit = source == .codex ? codex.latestUsageLimit(in: files) : nil
-        if let usageLimit {
+        let loggedUsageLimit = source == .codex ? codex.latestUsageLimit(in: files) : nil
+        let accountRateLimits = source == .codex
+            ? await currentCodexAccountRateLimits(now: Date())
+            : []
+        if !accountRateLimits.isEmpty {
+            try await store.upsertUsageLimits(accountRateLimits, now: Date())
+        } else if let loggedUsageLimit {
             // Save the timestamp reported by Codex, never the refresh time.
-            try await store.upsertUsageLimits([usageLimit], now: Date())
+            try await store.upsertUsageLimits([loggedUsageLimit], now: Date())
         }
+        let usageLimit = accountRateLimits.max { $0.windowMinutes < $1.windowMinutes }
+            ?? loggedUsageLimit
         let refreshedAt = Date()
         let usageLimitHistory = try await store.usageLimitHistory(
             source: source,
@@ -178,31 +207,27 @@ actor UsageCoordinator {
         let calendar = Calendar.current
         let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
         let from = calendar.date(byAdding: .day, value: -364, to: through) ?? .distantPast
-        let report = try await store.reduceEvents(
+        let report = try await usageReport(
             source: source,
             from: from,
             through: through,
-            initial: UsageLoadAccumulator(
-                calendar: calendar,
-                quotaSource: source == .codex ? source : nil,
-                quotaEndpoints: usageLimitHistory.map(\.observedAt)
-            )
-        ) { report, event in
-            try report.usage.add(event, calculator: calculator)
-            report.quotaTokens?.add(
-                event,
-                attribution: Self.quotaAttribution(for: event, calculator: calculator)
-            )
-        }
-        let daily = report.usage.dailyUsage
-        let dailyByModel = report.usage.dailyModelUsage
+            calendar: calendar,
+            requiresFullRebuild: requiresFullUsageRebuild,
+            earliestChange: earliestUsageChange
+        )
+        let quotaTokens = try await quotaTokenAccumulator(
+            source: source,
+            endpoints: usageLimitHistory.map(\.observedAt)
+        )
+        let daily = report.dailyUsage
+        let dailyByModel = report.dailyModelUsage
         let coverageStartedAt = try await establishQuotaTokenCoverageIfNeeded(
             source: source,
             existing: existingCoverageStartedAt,
             loadStartedAt: loadStartedAt,
             hasFiles: !files.isEmpty
         )
-        let quotaTokenSummary = report.quotaTokens?.summary(
+        let quotaTokenSummary = quotaTokens?.summary(
             isComplete: unreadable == 0 && !files.isEmpty,
             coverageStartedAt: coverageStartedAt
         )
@@ -229,10 +254,120 @@ actor UsageCoordinator {
             : .ready(snapshot)
     }
 
+    private func usageReport(
+        source: UsageSource,
+        from: Date,
+        through: Date,
+        calendar: Calendar,
+        requiresFullRebuild: Bool,
+        earliestChange: Date?
+    ) async throws -> UsageReportCache {
+        let cached = usageReportCaches[source]
+        let canReuse = !requiresFullRebuild && cached.map {
+            $0.from <= from && $0.timeZoneIdentifier == calendar.timeZone.identifier
+        } == true
+
+        if canReuse, earliestChange == nil, let cached {
+            let trimmed = cached.trimmed(from: from, through: through)
+            usageReportCaches[source] = trimmed
+            return trimmed
+        }
+
+        let rebuildFrom: Date
+        let accumulator: UsageReportAccumulator
+        if canReuse, let cached, let earliestChange {
+            rebuildFrom = max(from, calendar.startOfDay(for: earliestChange))
+            if rebuildFrom >= through {
+                let trimmed = cached.trimmed(from: from, through: through)
+                usageReportCaches[source] = trimmed
+                return trimmed
+            }
+            accumulator = UsageReportAccumulator(
+                calendar: calendar,
+                reusing: cached.dailyUsage,
+                dailyModelUsage: cached.dailyModelUsage,
+                before: rebuildFrom
+            )
+        } else {
+            rebuildFrom = from
+            accumulator = UsageReportAccumulator(calendar: calendar)
+        }
+
+        let updated = try await store.reduceEvents(
+            source: source,
+            from: rebuildFrom,
+            through: through,
+            initial: accumulator
+        ) { report, event in
+            try report.add(event, calculator: calculator)
+        }
+        let result = UsageReportCache(
+            from: from,
+            through: through,
+            timeZoneIdentifier: calendar.timeZone.identifier,
+            dailyUsage: updated.dailyUsage,
+            dailyModelUsage: updated.dailyModelUsage
+        )
+        usageReportCaches[source] = result
+        return result
+    }
+
+    private func quotaTokenAccumulator(
+        source: UsageSource,
+        endpoints: [Date]
+    ) async throws -> QuotaTokenSummary.Accumulator? {
+        guard source == .codex else { return nil }
+        var accumulator = QuotaTokenSummary.Accumulator(source: source, endpoints: endpoints)
+        guard let first = endpoints.min(), let last = endpoints.max() else { return accumulator }
+
+        accumulator = try await store.reduceEvents(
+            source: source,
+            from: first,
+            // Stored timestamps have millisecond precision and the query's
+            // upper bound is exclusive. Include events exactly at the endpoint.
+            through: last.addingTimeInterval(0.001),
+            initial: accumulator
+        ) { summary, event in
+            summary.add(
+                event,
+                attribution: Self.quotaAttribution(for: event, calculator: calculator)
+            )
+        }
+        return accumulator
+    }
+
+    private static func earliestDate(
+        _ current: Date?,
+        among events: [NormalizedUsageEvent]
+    ) -> Date? {
+        guard let candidate = events.lazy.map(\.occurredAt).min() else { return current }
+        return min(current ?? candidate, candidate)
+    }
+
+    private func currentCodexAccountRateLimits(now: Date) async -> [UsageLimitSnapshot] {
+        if let attemptedAt = accountRateLimitAttemptedAt,
+           now.timeIntervalSince(attemptedAt) < Self.accountRateLimitRefreshInterval {
+            return cachedAccountRateLimits
+        }
+        accountRateLimitAttemptedAt = now
+        let fetched = await codexAccountRateLimits.fetch(observedAt: now)
+        if !fetched.isEmpty {
+            cachedAccountRateLimits = fetched
+            accountRateLimitSucceededAt = now
+            return fetched
+        }
+        if let succeededAt = accountRateLimitSucceededAt,
+           now.timeIntervalSince(succeededAt) <= Self.accountRateLimitStaleInterval {
+            return cachedAccountRateLimits
+        }
+        cachedAccountRateLimits = []
+        return []
+    }
+
     func scheduleRefresh(_ operation: @escaping @Sendable () async -> Void) {
         scanTask?.cancel()
         scanTask = Task {
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
             await operation()
         }
@@ -325,7 +460,7 @@ actor UsageCoordinator {
             // local events must not be silently charged to the general bucket.
             return .separateModelQuota
         }
-        guard let canonical = calculator.catalog.pricing(for: requestedModel)?.canonicalName,
+        guard let canonical = calculator.pricing(for: requestedModel)?.canonicalName,
               canonical.lowercased().hasPrefix("gpt-")
         else { return .unknown }
         return .general
@@ -366,14 +501,20 @@ actor UsageCoordinator {
     }
 }
 
-private struct UsageLoadAccumulator: Sendable {
-    var usage: UsageReportAccumulator
-    var quotaTokens: QuotaTokenSummary.Accumulator?
+private struct UsageReportCache: Sendable {
+    let from: Date
+    let through: Date
+    let timeZoneIdentifier: String
+    let dailyUsage: [DailyUsage]
+    let dailyModelUsage: [DailyModelUsage]
 
-    init(calendar: Calendar, quotaSource: UsageSource?, quotaEndpoints: [Date]) {
-        usage = UsageReportAccumulator(calendar: calendar)
-        quotaTokens = quotaSource.map {
-            QuotaTokenSummary.Accumulator(source: $0, endpoints: quotaEndpoints)
-        }
+    func trimmed(from: Date, through: Date) -> UsageReportCache {
+        UsageReportCache(
+            from: from,
+            through: through,
+            timeZoneIdentifier: timeZoneIdentifier,
+            dailyUsage: dailyUsage.filter { $0.day >= from && $0.day < through },
+            dailyModelUsage: dailyModelUsage.filter { $0.day >= from && $0.day < through }
+        )
     }
 }

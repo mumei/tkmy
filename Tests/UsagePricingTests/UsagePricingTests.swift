@@ -51,12 +51,21 @@ final class UsagePricingTests: XCTestCase {
 
     func testDatedModelSnapshotResolvesToReviewedFamily() throws {
         let catalog = try PricingCatalog.bundled().validated()
+        let calculator = try UsagePriceCalculator(catalog: catalog)
         XCTAssertEqual(
             catalog.pricing(for: "claude-sonnet-4-6-20260715")?.canonicalName,
             "claude-sonnet-4-6"
         )
         XCTAssertEqual(
             catalog.pricing(for: "gpt-5.4-mini-2026-03-17")?.canonicalName,
+            "gpt-5.4-mini"
+        )
+        XCTAssertEqual(
+            calculator.pricing(for: "  CLAUDE-SONNET-4-6-20260715  ")?.canonicalName,
+            "claude-sonnet-4-6"
+        )
+        XCTAssertEqual(
+            calculator.pricing(for: "gpt-5.4-mini-2026-03-17")?.canonicalName,
             "gpt-5.4-mini"
         )
     }
@@ -128,6 +137,40 @@ final class UsagePricingTests: XCTestCase {
 
         XCTAssertEqual(report.dailyUsage, try calculator.dailyUsage(events: events, calendar: .current))
         XCTAssertEqual(report.dailyModelUsage, try calculator.dailyModelUsage(events: events, calendar: .current))
+    }
+
+    func testReportCanReuseCompletedDaysAndRebuildChangedTail() throws {
+        let calculator = try makeCalculator()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let firstDay = calendar.startOfDay(for: day)
+        let secondDay = calendar.date(byAdding: .day, value: 1, to: firstDay)!
+        let original = [
+            makeEvent(key: "first", model: "model-a", tokens: .init(input: 10), occurredAt: firstDay),
+            makeEvent(key: "old-tail", model: "model-a", tokens: .init(output: 20), occurredAt: secondDay),
+        ]
+        var initial = UsageReportAccumulator(calendar: calendar)
+        for event in original { try initial.add(event, calculator: calculator) }
+
+        var refreshed = UsageReportAccumulator(
+            calendar: calendar,
+            reusing: initial.dailyUsage,
+            dailyModelUsage: initial.dailyModelUsage,
+            before: secondDay
+        )
+        let replacementTail = makeEvent(
+            key: "new-tail",
+            model: "alias-a",
+            tokens: .init(output: 5),
+            occurredAt: secondDay
+        )
+        try refreshed.add(replacementTail, calculator: calculator)
+
+        var expected = UsageReportAccumulator(calendar: calendar)
+        try expected.add(original[0], calculator: calculator)
+        try expected.add(replacementTail, calculator: calculator)
+        XCTAssertEqual(refreshed.dailyUsage, expected.dailyUsage)
+        XCTAssertEqual(refreshed.dailyModelUsage, expected.dailyModelUsage)
     }
 
     func testCatalogJSONLoadingAndValidation() throws {
@@ -276,12 +319,13 @@ final class UsagePricingTests: XCTestCase {
         source: UsageSource = .codex,
         model: String?,
         sourceCost: Int64? = nil,
-        tokens: TokenBreakdown
+        tokens: TokenBreakdown,
+        occurredAt: Date? = nil
     ) -> NormalizedUsageEvent {
         NormalizedUsageEvent(
             eventKey: key,
             source: source,
-            occurredAt: day,
+            occurredAt: occurredAt ?? day,
             tokens: tokens,
             model: model,
             sourceCostMicrosUSD: sourceCost,

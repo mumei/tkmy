@@ -85,7 +85,7 @@ public struct PricingCatalog: Codable, Equatable, Sendable {
         name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private static func removingSnapshotDate(from name: String) -> String {
+    static func removingSnapshotDate(from name: String) -> String {
         let parts = name.split(separator: "-", omittingEmptySubsequences: false)
         if let last = parts.last, last.count == 8, last.allSatisfy(\.isNumber) {
             return parts.dropLast().joined(separator: "-")

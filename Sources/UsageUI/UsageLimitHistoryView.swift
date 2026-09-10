@@ -158,30 +158,49 @@ struct UsageLimitHistoryView: View {
     }
 
     private var tokenSummary: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            if let pace = consumptionPace, let tokens = tokenBreakdown(for: pace) {
-                Text(L10n.text("quota_tokens_average_format", tokenAverage(tokens.total, pace: pace)))
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 2) {
+            if let pace = consumptionPace {
+                Text(L10n.text(
+                    "quota_pace_average_format",
+                    QuotaConfirmationDuration.text(duration: pace.secondsPerPercentagePoint)
+                ))
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let tokens = tokenBreakdown(for: pace) {
+                        Text(L10n.text(
+                            "quota_tokens_average_format",
+                            tokenAverage(tokens.total, pace: pace)
+                        ))
+                        .font(.caption)
+                        .lineLimit(1)
+                        Button {
+                            showsTokenDetails.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(L10n.text("quota_token_details"))
+                        .help(L10n.text("quota_token_details"))
+                        .popover(isPresented: $showsTokenDetails, arrowEdge: .bottom) {
+                            tokenDetails
+                        }
+                    } else {
+                        Text(L10n.text("quota_tokens_unavailable"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
             } else {
-                Text(L10n.text("quota_tokens_unavailable"))
+                Text(L10n.text("quota_pace_insufficient"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            Button {
-                showsTokenDetails.toggle()
-            } label: {
-                Image(systemName: "info.circle")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(L10n.text("quota_token_details"))
-            .help(L10n.text("quota_token_details"))
-            .popover(isPresented: $showsTokenDetails, arrowEdge: .bottom) {
-                tokenDetails
-            }
-            Spacer(minLength: 0)
         }
     }
 
@@ -229,7 +248,7 @@ struct UsageLimitHistoryView: View {
     private var observationTable: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 12) {
-                Text(L10n.text("quota_confirmation_period"))
+                Text(L10n.text("quota_observed"))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(L10n.text("quota_remaining"))
                     .frame(width: 68, alignment: .trailing)
@@ -249,20 +268,21 @@ struct UsageLimitHistoryView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 8)
                     }
-                    ForEach(observations.reversed()) { observation in
+                    ForEach(observations.indices.reversed(), id: \.self) { index in
+                        let observation = observations[index]
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(confirmationPeriod(observation))
+                                Text(timestamp(observation.observedAt))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
-                                Text(QuotaConfirmationDuration.text(for: observation))
+                                Text(elapsedSincePrevious(at: index))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
                             .monospacedDigit()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .help(confirmationPeriod(observation))
+                            .help(timestamp(observation.observedAt))
                             Text(percentage(observation.remainingPercent))
                                 .monospacedDigit()
                                 .frame(width: 68, alignment: .trailing)
@@ -303,10 +323,6 @@ struct UsageLimitHistoryView: View {
         return reset.formatted(.dateTime.month().day().hour().minute().second().locale(L10n.locale))
     }
 
-    private func confirmationPeriod(_ observation: UsageLimitSnapshot) -> String {
-        period(start: observation.observedAt, end: observation.lastObservedAt)
-    }
-
     private func period(start: Date, end: Date) -> String {
         guard start != end else { return timestamp(start) }
         let endText = Calendar.current.isDate(start, inSameDayAs: end)
@@ -317,6 +333,19 @@ struct UsageLimitHistoryView: View {
 
     private func timestamp(_ date: Date) -> String {
         date.formatted(.dateTime.month().day().hour().minute().second().locale(L10n.locale))
+    }
+
+    private func elapsedSincePrevious(at index: Int) -> String {
+        guard index > observations.startIndex else {
+            return L10n.text("quota_first_observation")
+        }
+        let elapsed = max(0.001, observations[index].observedAt.timeIntervalSince(
+            observations[observations.index(before: index)].observedAt
+        ))
+        return L10n.text(
+            "quota_since_previous_format",
+            QuotaConfirmationDuration.text(duration: elapsed)
+        )
     }
 
     private func readableLimitID(_ limitID: String) -> String {

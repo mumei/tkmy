@@ -88,7 +88,8 @@ private func observation(duration: TimeInterval) -> UsageLimitSnapshot {
     let plainKeys = [
         "quota_range_1h", "quota_range_6h", "quota_range_12h", "quota_range_1d",
         "quota_consumption_pace", "quota_pace_recent", "quota_pace_note",
-        "quota_pace_insufficient", "quota_tokens_note", "quota_tokens_unavailable"
+        "quota_pace_insufficient", "quota_tokens_note", "quota_tokens_unavailable",
+        "quota_first_observation"
     ]
     for language in AppLanguage.allCases {
         for key in plainKeys {
@@ -102,5 +103,7 @@ private func observation(duration: TimeInterval) -> UsageLimitSnapshot {
         }
         #expect(!L10n.text("quota_pace_basis_format", language: language, "35", "2").contains("%@"))
         #expect(!L10n.text("quota_tokens_breakdown_format", language: language, "100", "200", "30").contains("%@"))
+        let sincePrevious = L10n.text("quota_since_previous_format", language: language, "12 min")
+        #expect(sincePrevious.contains("12 min") && !sincePrevious.contains("%@"))
     }
 }

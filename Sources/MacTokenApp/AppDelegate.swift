@@ -55,7 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 statusControllers.append(controller)
             }
             installWatchers(coordinator: coordinator)
-            fallbackRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            // FSEvents provides normal refreshes. Keep only a low-frequency
+            // fallback so an idle menu-bar app does not rescan large histories
+            // every minute.
+            fallbackRefreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
                 Task { @MainActor in await self?.refreshAll() }
             }
             Task { await refreshAll() }
@@ -108,15 +111,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         isRefreshing = true
-        repeat {
-            refreshPending = false
-            await withTaskGroup(of: Void.self) { group in
-                for model in viewModels {
-                    group.addTask { await model.refresh() }
-                }
+        refreshPending = false
+        await withTaskGroup(of: Void.self) { group in
+            for model in viewModels {
+                group.addTask { await model.refresh() }
             }
-        } while refreshPending
+        }
         isRefreshing = false
+
+        // Changes received during a refresh are coalesced through the same
+        // debounce path instead of starting another full pass immediately.
+        if refreshPending, let coordinator {
+            refreshPending = false
+            await coordinator.scheduleRefresh { [weak self] in
+                await self?.refreshAll()
+            }
+        }
     }
 
     private func presentStartupFailure(_ error: Error) {

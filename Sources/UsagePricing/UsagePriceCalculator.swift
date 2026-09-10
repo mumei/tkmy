@@ -19,13 +19,36 @@ public struct EventPrice: Equatable, Sendable {
 public struct UsagePriceCalculator: Sendable {
     public static let microsPerMillionTokens: Int64 = 1_000_000
     public let catalog: PricingCatalog
+    private let pricingByModelFamily: [String: ModelPricing]
 
     public init(catalog: PricingCatalog) throws {
-        self.catalog = try catalog.validated()
+        let validated = try catalog.validated()
+        self.catalog = validated
+        var lookup: [String: ModelPricing] = [:]
+        for model in validated.models {
+            for name in [model.canonicalName] + model.aliases {
+                let key = PricingCatalog.removingSnapshotDate(
+                    from: PricingCatalog.normalize(name)
+                )
+                // Preserve the catalog's existing first-match behavior if two
+                // reviewed aliases ever normalize to the same model family.
+                if lookup[key] == nil { lookup[key] = model }
+            }
+        }
+        self.pricingByModelFamily = lookup
     }
 
     public static func bundled() throws -> UsagePriceCalculator {
         try UsagePriceCalculator(catalog: .bundled())
+    }
+
+    /// Constant-time equivalent of `PricingCatalog.pricing(for:)` for hot
+    /// ingestion and aggregation paths.
+    public func pricing(for modelName: String) -> ModelPricing? {
+        let key = PricingCatalog.removingSnapshotDate(
+            from: PricingCatalog.normalize(modelName)
+        )
+        return pricingByModelFamily[key]
     }
 
     public func price(_ event: NormalizedUsageEvent) throws -> EventPrice {
@@ -39,7 +62,7 @@ public struct UsagePriceCalculator: Sendable {
             return EventPrice(costMicrosUSD: 0, basis: .noBillableTokens)
         }
         guard let requestedModel = event.model,
-              let model = catalog.pricing(for: requestedModel) else {
+              let model = pricing(for: requestedModel) else {
             return EventPrice(costMicrosUSD: nil, basis: .unknownModel(requestedModel: event.model))
         }
 
@@ -104,7 +127,7 @@ public struct UsagePriceCalculator: Sendable {
             try validate(tokens: event.tokens, eventKey: event.eventKey)
             let requestedModel = event.model?.trimmingCharacters(in: .whitespacesAndNewlines)
             let nonemptyModel = requestedModel.flatMap { $0.isEmpty ? nil : $0 }
-            let canonicalModel = nonemptyModel.flatMap { catalog.pricing(for: $0)?.canonicalName }
+            let canonicalModel = nonemptyModel.flatMap { pricing(for: $0)?.canonicalName }
             let key = Key(
                 day: calendar.startOfDay(for: event.occurredAt),
                 source: event.source,
@@ -202,6 +225,28 @@ public struct UsageReportAccumulator: Sendable {
         self.calendar = calendar
     }
 
+    /// Reuses completed days from a previous report and leaves `cutoff` and
+    /// later to be rebuilt from raw events. This keeps frequent refreshes
+    /// proportional to the changed tail instead of the full retained history.
+    public init(
+        calendar: Calendar,
+        reusing dailyUsage: [DailyUsage],
+        dailyModelUsage: [DailyModelUsage],
+        before cutoff: Date
+    ) {
+        self.calendar = calendar
+        for usage in dailyUsage where usage.day < cutoff {
+            days[DayKey(day: usage.day, source: usage.source)] = DayValue(
+                tokens: usage.tokens,
+                knownCostMicrosUSD: usage.knownCostMicrosUSD,
+                unknownCostEventCount: usage.unknownCostEventCount
+            )
+        }
+        for usage in dailyModelUsage where usage.day < cutoff {
+            models[ModelKey(day: usage.day, source: usage.source, model: usage.model)] = usage.tokens
+        }
+    }
+
     public mutating func add(_ event: NormalizedUsageEvent, calculator: UsagePriceCalculator) throws {
         let day = calendar.startOfDay(for: event.occurredAt)
         let dayKey = DayKey(day: day, source: event.source)
@@ -219,7 +264,7 @@ public struct UsageReportAccumulator: Sendable {
 
         let requestedModel = event.model?.trimmingCharacters(in: .whitespacesAndNewlines)
         let nonemptyModel = requestedModel.flatMap { $0.isEmpty ? nil : $0 }
-        let canonicalModel = nonemptyModel.flatMap { calculator.catalog.pricing(for: $0)?.canonicalName }
+        let canonicalModel = nonemptyModel.flatMap { calculator.pricing(for: $0)?.canonicalName }
         let modelKey = ModelKey(day: day, source: event.source, model: canonicalModel ?? nonemptyModel)
         models[modelKey] = try calculator.add(models[modelKey, default: .zero], event.tokens)
     }

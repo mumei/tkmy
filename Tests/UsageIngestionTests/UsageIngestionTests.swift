@@ -45,6 +45,74 @@ import UsageDomain
     #expect(limit.resetsAt == Date(timeIntervalSince1970: 1_786_168_800))
 }
 
+@Test func codexAccountRateLimitsPreferTheNamedGeneralBucket() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let response = Data("""
+    {"id":1,"result":{"userAgent":"Codex"}}
+    {"method":"account/rateLimits/updated","params":{"rateLimits":{}}}
+    {"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":99,"windowDurationMins":300}},"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":1800000300},"secondary":{"usedPercent":48,"windowDurationMins":10080,"resetsAt":1800600000}},"codex_bengalfox":{"limitId":"codex_bengalfox","primary":{"usedPercent":0,"windowDurationMins":300}}}}}
+    """.utf8)
+
+    let snapshots = CodexAccountRateLimitProvider.snapshots(from: response, observedAt: observedAt)
+    #expect(snapshots.map(\.limitID) == ["codex", "codex"])
+    #expect(snapshots.map(\.usedPercent) == [12, 48])
+    #expect(snapshots.map(\.windowMinutes) == [300, 10_080])
+    #expect(snapshots.allSatisfy { $0.observedAt == observedAt })
+    #expect(snapshots.last?.resetsAt == Date(timeIntervalSince1970: 1_800_600_000))
+}
+
+@Test func codexAccountRateLimitsSupportLegacyResponseAndRejectInvalidWindows() throws {
+    let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    let response = Data("""
+    {"id":2,"result":{"rateLimits":{"limit_id":"codex","primary":{"used_percent":59,"window_minutes":10080},"secondary":{"usedPercent":true,"windowDurationMins":300}}}}
+    """.utf8)
+
+    let snapshots = CodexAccountRateLimitProvider.snapshots(from: response, observedAt: observedAt)
+    #expect(snapshots.count == 1)
+    let snapshot = try #require(snapshots.first)
+    #expect(snapshot.usedPercent == 59)
+    #expect(snapshot.remainingPercent == 41)
+    #expect(snapshot.windowMinutes == 10_080)
+    #expect(snapshot.resetsAt == nil)
+}
+
+@Test func codexAccountRateLimitProviderReturnsWithoutWaitingForServerExit() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let executable = directory.appendingPathComponent("fake-codex")
+    try Data("""
+    #!/bin/sh
+    read first
+    read second
+    read third
+    echo '{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":49,"windowDurationMins":10080}}}}'
+    sleep 30
+    """.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+    let provider = CodexAccountRateLimitProvider(
+        executableURL: executable,
+        environment: ["PATH": "/bin:/usr/bin"],
+        timeout: 3
+    )
+    let startedAt = Date()
+    let snapshots = await provider.fetch(observedAt: Date(timeIntervalSince1970: 1_800_000_000))
+
+    #expect(Date().timeIntervalSince(startedAt) < 2)
+    #expect(snapshots.count == 1)
+    #expect(snapshots.first?.usedPercent == 49)
+}
+
+@Test func codexAccountRateLimitProviderCanReadInstalledCodexWhenRequested() async throws {
+    guard ProcessInfo.processInfo.environment["TKMY_LIVE_CODEX_TEST"] == "1" else { return }
+    let executable = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex")
+    let provider = CodexAccountRateLimitProvider(executableURL: executable, timeout: 15)
+    let snapshots = await provider.fetch()
+
+    #expect(snapshots.contains { $0.limitID == "codex" && $0.windowMinutes > 0 })
+}
+
 @Test func claudeParsesCostsCacheBucketsAndConservativeReplayDedupe() throws {
     let adapter = ClaudeCodeAdapter(environment: [:], homeDirectory: URL(fileURLWithPath: "/tmp/home"))
     let result = adapter.parse(
