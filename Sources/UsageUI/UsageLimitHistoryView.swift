@@ -13,6 +13,7 @@ enum UsagePopoverPane: String, CaseIterable, Identifiable, Hashable {
 
 struct UsageLimitHistoryView: View {
     let history: [UsageLimitSnapshot]
+    private let displayHistory: [UsageLimitSnapshot]
     let source: UsageSource
     let quotaTokenSummary: QuotaTokenSummary?
     let layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)?
@@ -32,6 +33,7 @@ struct UsageLimitHistoryView: View {
         chartRangeObserver: ((UsageLimitHistoryRange) -> Void)? = nil
     ) {
         self.history = history
+        self.displayHistory = UsageLimitHistoryTimeline.confirmedHistory(from: history)
         self.source = source
         self.quotaTokenSummary = quotaTokenSummary
         self.layoutObserver = layoutObserver
@@ -42,7 +44,7 @@ struct UsageLimitHistoryView: View {
 
     private var now: Date { Date() }
     private var buckets: [UsageLimitHistoryBucket] {
-        UsageLimitHistoryTimeline.buckets(from: history, source: source, range: range, now: now)
+        UsageLimitHistoryTimeline.buckets(from: displayHistory, source: source, range: range, now: now)
     }
     private var selectedBucket: UsageLimitHistoryBucket? {
         buckets.first { $0.id == selectedBucketID }
@@ -51,7 +53,7 @@ struct UsageLimitHistoryView: View {
     private var observations: [UsageLimitSnapshot] {
         guard let selectedBucket else { return [] }
         return UsageLimitHistoryTimeline.observations(
-            from: history,
+            from: displayHistory,
             source: source,
             bucket: selectedBucket,
             range: range,
@@ -64,7 +66,7 @@ struct UsageLimitHistoryView: View {
     private var chartObservations: [UsageLimitSnapshot] {
         guard let selectedBucket else { return [] }
         return UsageLimitHistoryTimeline.chartObservations(
-            from: history, source: source, bucket: selectedBucket, range: range, now: now
+            from: displayHistory, source: source, bucket: selectedBucket, range: range, now: now
         )
     }
     private var consumptionPace: QuotaConsumptionPace? {
@@ -246,7 +248,10 @@ struct UsageLimitHistoryView: View {
     }
 
     private var observationTable: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        // LazyVStack may request a row after the view's time-dependent
+        // observations have changed. Keep indices and row data on one snapshot.
+        let tableObservations = observations
+        return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 12) {
                 Text(L10n.text("quota_observed"))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -261,21 +266,21 @@ struct UsageLimitHistoryView: View {
 
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
-                    if observations.isEmpty {
+                    if tableObservations.isEmpty {
                         Text(L10n.text("quota_history_period_empty"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 8)
                     }
-                    ForEach(observations.indices.reversed(), id: \.self) { index in
-                        let observation = observations[index]
+                    ForEach(tableObservations.indices.reversed(), id: \.self) { index in
+                        let observation = tableObservations[index]
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(timestamp(observation.observedAt))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
-                                Text(elapsedSincePrevious(at: index))
+                                Text(elapsedSincePrevious(at: index, in: tableObservations))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -335,7 +340,7 @@ struct UsageLimitHistoryView: View {
         date.formatted(.dateTime.month().day().hour().minute().second().locale(L10n.locale))
     }
 
-    private func elapsedSincePrevious(at index: Int) -> String {
+    private func elapsedSincePrevious(at index: Int, in observations: [UsageLimitSnapshot]) -> String {
         guard index > observations.startIndex else {
             return L10n.text("quota_first_observation")
         }
