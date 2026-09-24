@@ -8,6 +8,24 @@ import UsageDomain
 @Suite(.serialized)
 @MainActor
 struct QuotaHistoryScrollingTests {
+    @Test("Quota rows remain safe while history refreshes during scrolling")
+    func quotaRowsSurviveHistoryRefresh() throws {
+        let rendered = try renderScrollableQuotaHistory(language: .japanese)
+        defer { rendered.close() }
+
+        let fullHistory = scrollingQuotaHistoryFixture(now: Date())
+        for count in [30, 1, 120, 2, 180] {
+            rendered.replaceHistory(Array(fullHistory.suffix(count)))
+            if let rowScrollView = allDescendants(of: rendered.hostingView, as: NSScrollView.self)
+                .first(where: { $0.documentView != nil }) {
+                rowScrollView.contentView.scroll(to: NSPoint(x: 0, y: 10_000))
+                rowScrollView.reflectScrolledClipView(rowScrollView.contentView)
+            }
+            settle(rendered.hostingView, window: rendered.window)
+            #expect(rendered.stableMetrics() != nil)
+        }
+    }
+
     @Test("Quota-history rows scroll independently in Japanese")
     func quotaHistoryKeepsItsControlsAndChartFixedWhileRowsScroll() throws {
         let defaults = UserDefaults.standard
@@ -94,8 +112,10 @@ private final class ScrollableQuotaHistoryRender {
     let hostingView: NSHostingView<AnyView>
     let window: NSWindow
     private let capture: QuotaHistoryLayoutCapture
+    private let language: AppLanguage
 
     init(language: AppLanguage) {
+        self.language = language
         let now = Date()
         let layoutCapture = QuotaHistoryLayoutCapture()
         capture = layoutCapture
@@ -131,6 +151,22 @@ private final class ScrollableQuotaHistoryRender {
     }
 
     func stableMetrics() -> QuotaHistoryLayoutMetrics? { capture.metrics }
+
+    func replaceHistory(_ history: [UsageLimitSnapshot]) {
+        let bucket = UsageLimitHistoryTimeline.preferredBucket(in:
+            UsageLimitHistoryTimeline.buckets(from: history, source: .codex, range: .sevenDays, now: Date())
+        )
+        hostingView.rootView = AnyView(UsageLimitHistoryView(
+            history: history,
+            source: .codex,
+            range: .constant(.sevenDays),
+            selectedBucketID: .constant(bucket?.id),
+            layoutObserver: { [capture] metrics in capture.metrics = metrics }
+        )
+        .environment(\.locale, Locale(identifier: language.rawValue))
+        .environment(\.colorScheme, .dark)
+        .environment(\.dynamicTypeSize, .medium))
+    }
 
     func close() {
         window.contentView = nil
