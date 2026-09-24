@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "effectiveDate": "2026-09-06",
+  "effectiveDate": "2026-09-25",
   "provenance": [
     {
       "provider": "OpenAI",
@@ -49,6 +49,18 @@
       "url": "https://platform.claude.com/docs/en/models/overview",
       "retrievedAt": "2026-09-06",
       "note": "Model-family naming and availability reference for the reviewed Claude models."
+    },
+    {
+      "provider": "OpenAI",
+      "url": "https://developers.openai.com/api/docs/pricing",
+      "retrievedAt": "2026-09-25",
+      "note": "GPT-6 Sol and Luna Standard short-context text-token prices, including 1.25x cache writes. Long-context and other service tiers are excluded."
+    },
+    {
+      "provider": "Anthropic",
+      "url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrievedAt": "2026-09-25",
+      "note": "Claude Opus 5.5 standard input, output, and cache prices; cache reads cost 0.05x input."
     }
   ],
   "models": [
@@ -127,6 +139,28 @@
         "cacheCreate5m": 12500000,
         "cacheCreate1h": 12500000,
         "cacheRead": 1000000
+      }
+    },
+    {
+      "canonicalName": "gpt-6-sol",
+      "aliases": [],
+      "rates": {
+        "input": 2000000,
+        "output": 10000000,
+        "cacheCreate5m": 2500000,
+        "cacheCreate1h": 2500000,
+        "cacheRead": 200000
+      }
+    },
+    {
+      "canonicalName": "gpt-6-luna",
+      "aliases": [],
+      "rates": {
+        "input": 100000,
+        "output": 500000,
+        "cacheCreate5m": 125000,
+        "cacheCreate1h": 125000,
+        "cacheRead": 10000
       }
     },
     {
@@ -215,6 +249,17 @@
         "cacheCreate5m": 6250000,
         "cacheCreate1h": 10000000,
         "cacheRead": 500000
+      }
+    },
+    {
+      "canonicalName": "claude-opus-5-5",
+      "aliases": ["claude-opus-5.5", "opus-5.5"],
+      "rates": {
+        "input": 4000000,
+        "output": 20000000,
+        "cacheCreate5m": 5000000,
+        "cacheCreate1h": 8000000,
+        "cacheRead": 200000
       }
     },
     {

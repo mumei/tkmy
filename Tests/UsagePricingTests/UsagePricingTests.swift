@@ -189,7 +189,7 @@ final class UsagePricingTests: XCTestCase {
 
     func testBundledCatalogCoversCurrentCodexModelFamilies() throws {
         let catalog = try PricingCatalog.bundled().validated()
-        for model in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"] {
+        for model in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
             XCTAssertNotNil(catalog.pricing(for: model), "Missing reviewed pricing for \(model)")
         }
         XCTAssertNil(catalog.pricing(for: "gpt-5.3-codex-spark"))
@@ -210,6 +210,12 @@ final class UsagePricingTests: XCTestCase {
 
         let sol = try calculator.price(makeEvent(model: "gpt-5.6-2026-09-01", tokens: allCategories))
         XCTAssertEqual(sol, EventPrice(costMicrosUSD: 1_306_000, basis: .catalog(canonicalModel: "gpt-5.6-sol")))
+
+        let newSol = try calculator.price(makeEvent(model: "gpt-6-sol", tokens: allCategories))
+        XCTAssertEqual(newSol, EventPrice(costMicrosUSD: 653_000, basis: .catalog(canonicalModel: "gpt-6-sol")))
+
+        let luna = try calculator.price(makeEvent(model: "gpt-6-luna", tokens: allCategories))
+        XCTAssertEqual(luna, EventPrice(costMicrosUSD: 32_650, basis: .catalog(canonicalModel: "gpt-6-luna")))
     }
 
     func testBundledCatalogPricesNewClaudeFamiliesAcrossTokenCategories() throws {
@@ -227,6 +233,7 @@ final class UsagePricingTests: XCTestCase {
             ("fable-5", "claude-fable-5", 3_490_000),
             ("claude-mythos-5", "claude-mythos-5", 3_490_000),
             ("opus-5", "claude-opus-5", 1_745_000),
+            ("claude-opus-5.5", "claude-opus-5-5", 1_388_000),
             ("claude-opus-4.8", "claude-opus-4-8", 1_745_000),
             ("opus-4.7", "claude-opus-4-7", 1_745_000),
             ("opus-4.6", "claude-opus-4-6", 1_745_000),
@@ -254,7 +261,7 @@ final class UsagePricingTests: XCTestCase {
 
     func testBundledCatalogEffectiveDateReflectsReviewedPricing() throws {
         let catalog = try PricingCatalog.bundled().validated()
-        XCTAssertEqual(catalog.effectiveDate, "2026-09-06")
+        XCTAssertEqual(catalog.effectiveDate, "2026-09-25")
     }
 
     func testDuplicateAliasIsRejected() {
