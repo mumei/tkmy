@@ -45,6 +45,53 @@ enum UsageLimitHistoryTimeline {
     /// connections do not change this limit for consumption calculations.
     static let maximumConnectedGap = UsageLimitHistoryPolicy.maximumContinuousGap
 
+    /// Keep raw observations in storage, but do not present a quota recovery
+    /// within one reset window until it has persisted for another minute.
+    /// A new reset window is shown immediately.
+    static func confirmedHistory(from history: [UsageLimitSnapshot]) -> [UsageLimitSnapshot] {
+        let grouped = Dictionary(grouping: history) {
+            "\($0.source.rawValue)|\($0.limitID)|\($0.windowMinutes)"
+        }
+        return grouped.values.flatMap { bucket in
+            var confirmed: [UsageLimitSnapshot] = []
+            var pendingRecovery: [UsageLimitSnapshot] = []
+            for observation in bucket.sorted(by: { $0.observedAt < $1.observedAt }) {
+                guard let previous = confirmed.last else {
+                    confirmed.append(observation)
+                    continue
+                }
+                if isNewResetWindow(previous, observation) {
+                    pendingRecovery.removeAll()
+                    confirmed.append(observation)
+                } else if observation.remainingPercent <= previous.remainingPercent {
+                    pendingRecovery.removeAll()
+                    confirmed.append(observation)
+                } else {
+                    pendingRecovery.append(observation)
+                    if let first = pendingRecovery.first,
+                       observation.lastObservedAt.timeIntervalSince(first.observedAt) >= 60 {
+                        confirmed.append(contentsOf: pendingRecovery)
+                        pendingRecovery.removeAll()
+                    }
+                }
+            }
+            return confirmed
+        }
+        .sorted { $0.observedAt < $1.observedAt }
+    }
+
+    private static func isNewResetWindow(
+        _ previous: UsageLimitSnapshot, _ candidate: UsageLimitSnapshot
+    ) -> Bool {
+        guard let oldReset = previous.resetsAt, let newReset = candidate.resetsAt,
+              previous.windowMinutes > 0 else { return false }
+        // A storage epoch can change after a gap or a few seconds of reset
+        // timestamp jitter. Only a reset advancing by a substantial part of
+        // the window, after the old boundary has passed, is a new allowance.
+        return candidate.observedAt >= oldReset.addingTimeInterval(-UsageLimitHistoryPolicy.resetJitterTolerance)
+            && newReset.timeIntervalSince(oldReset) >= Double(previous.windowMinutes) * 30
+    }
+
     static func observations(
         from history: [UsageLimitSnapshot],
         source: UsageSource,
