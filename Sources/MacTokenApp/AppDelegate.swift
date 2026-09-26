@@ -72,6 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fallbackRefreshTimer?.invalidate()
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        settingsWindowController?.showSettings(on: nil)
+        return true
+    }
+
     private func makeViewModel(source: UsageSource, coordinator: UsageCoordinator) -> SourceUsageViewModel {
         SourceUsageViewModel(source: source) {
             try await coordinator.load(source)
