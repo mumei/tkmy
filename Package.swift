@@ -50,5 +50,6 @@ let package = Package(
         .testTarget(name: "UsageIngestionTests", dependencies: ["UsageIngestion", "UsageDomain", "UsageStore"]),
         .testTarget(name: "UsageStoreTests", dependencies: ["UsageStore", "UsageDomain"]),
         .testTarget(name: "UsageUITests", dependencies: ["UsageUI", "UsageDomain"]),
+        .testTarget(name: "TKMYAppTests", dependencies: ["TKMYApp"]),
     ]
 )

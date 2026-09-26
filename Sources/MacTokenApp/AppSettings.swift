@@ -3,6 +3,14 @@ import Foundation
 import ServiceManagement
 import UsageDomain
 
+protocol LaunchAtLoginService {
+    var status: SMAppService.Status { get }
+    func register() throws
+    func unregister() throws
+}
+
+extension SMAppService: LaunchAtLoginService {}
+
 @MainActor
 final class AppSettings: ObservableObject {
     enum MeterContentOrder: String, CaseIterable, Identifiable {
@@ -67,10 +75,12 @@ final class AppSettings: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    private let loginService: any LaunchAtLoginService
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, loginService: any LaunchAtLoginService = SMAppService.mainApp) {
         self.defaults = defaults
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        self.loginService = loginService
+        launchAtLogin = loginService.status == .enabled
         launchAtLoginError = nil
         opensDetailsOnHover = defaults.object(forKey: Key.opensDetailsOnHover) as? Bool ?? true
         showsCodexMenu = defaults.object(forKey: Key.showsCodexMenu) as? Bool ?? true
@@ -98,24 +108,24 @@ final class AppSettings: ObservableObject {
     }
 
     func refreshLaunchAtLoginStatus() {
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        launchAtLogin = loginService.status == .enabled
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
         launchAtLoginError = nil
         do {
             if enabled {
-                guard SMAppService.mainApp.status != .enabled else {
+                guard loginService.status != .enabled else {
                     launchAtLogin = true
                     return
                 }
-                try SMAppService.mainApp.register()
+                try loginService.register()
             } else {
-                guard SMAppService.mainApp.status == .enabled else {
+                guard loginService.status == .enabled || loginService.status == .requiresApproval else {
                     launchAtLogin = false
                     return
                 }
-                try SMAppService.mainApp.unregister()
+                try loginService.unregister()
             }
         } catch {
             launchAtLoginError = error.localizedDescription

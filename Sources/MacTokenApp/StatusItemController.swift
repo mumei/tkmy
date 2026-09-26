@@ -119,7 +119,7 @@ final class StatusItemController: NSObject {
         positionDetailPanel(relativeTo: button)
     }
 
-    @objc func mouseEntered(with event: NSEvent) {
+    @objc(mouseEntered:) func mouseEntered(with event: NSEvent) {
         guard settings.opensDetailsOnHover else { return }
         hoverTimer?.invalidate()
         hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in
@@ -127,7 +127,7 @@ final class StatusItemController: NSObject {
         }
     }
 
-    @objc func mouseExited(with event: NSEvent) {
+    @objc(mouseExited:) func mouseExited(with event: NSEvent) {
         hoverTimer?.invalidate()
     }
 
