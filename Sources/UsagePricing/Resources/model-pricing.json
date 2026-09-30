@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "effectiveDate": "2026-09-25",
+  "effectiveDate": "2026-09-30",
   "provenance": [
     {
       "provider": "OpenAI",
@@ -61,6 +61,12 @@
       "url": "https://platform.claude.com/docs/en/about-claude/pricing",
       "retrievedAt": "2026-09-25",
       "note": "Claude Opus 5.5 standard input, output, and cache prices; cache reads cost 0.05x input."
+    },
+    {
+      "provider": "OpenAI",
+      "url": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+      "retrievedAt": "2026-09-30",
+      "note": "GPT-6.1 Sol Standard short-context text-token prices: $2 input, $0.10 cached input, $2.50 cache writes, and $10 output per million tokens. Prompts above 272K input tokens use higher full-request rates; Fast, Batch/Flex, and regional pricing are excluded. Reasoning effort is a model setting, not a separate model."
     }
   ],
   "models": [
@@ -150,6 +156,17 @@
         "cacheCreate5m": 2500000,
         "cacheCreate1h": 2500000,
         "cacheRead": 200000
+      }
+    },
+    {
+      "canonicalName": "gpt-6.1-sol",
+      "aliases": [],
+      "rates": {
+        "input": 2000000,
+        "output": 10000000,
+        "cacheCreate5m": 2500000,
+        "cacheCreate1h": 2500000,
+        "cacheRead": 100000
       }
     },
     {

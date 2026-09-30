@@ -189,7 +189,7 @@ final class UsagePricingTests: XCTestCase {
 
     func testBundledCatalogCoversCurrentCodexModelFamilies() throws {
         let catalog = try PricingCatalog.bundled().validated()
-        for model in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+        for model in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"] {
             XCTAssertNotNil(catalog.pricing(for: model), "Missing reviewed pricing for \(model)")
         }
         XCTAssertNil(catalog.pricing(for: "gpt-5.3-codex-spark"))
@@ -213,6 +213,11 @@ final class UsagePricingTests: XCTestCase {
 
         let newSol = try calculator.price(makeEvent(model: "gpt-6-sol", tokens: allCategories))
         XCTAssertEqual(newSol, EventPrice(costMicrosUSD: 653_000, basis: .catalog(canonicalModel: "gpt-6-sol")))
+
+        let sol61 = try calculator.price(makeEvent(model: "gpt-6.1-sol", tokens: allCategories))
+        XCTAssertEqual(sol61, EventPrice(costMicrosUSD: 649_000, basis: .catalog(canonicalModel: "gpt-6.1-sol")))
+        XCTAssertEqual(calculator.pricing(for: "gpt-6.1-sol-2026-09-30")?.canonicalName, "gpt-6.1-sol")
+        XCTAssertNil(calculator.pricing(for: "gpt-6.1-sol-high"))
 
         let luna = try calculator.price(makeEvent(model: "gpt-6-luna", tokens: allCategories))
         XCTAssertEqual(luna, EventPrice(costMicrosUSD: 32_650, basis: .catalog(canonicalModel: "gpt-6-luna")))
@@ -261,7 +266,7 @@ final class UsagePricingTests: XCTestCase {
 
     func testBundledCatalogEffectiveDateReflectsReviewedPricing() throws {
         let catalog = try PricingCatalog.bundled().validated()
-        XCTAssertEqual(catalog.effectiveDate, "2026-09-25")
+        XCTAssertEqual(catalog.effectiveDate, "2026-09-30")
     }
 
     func testDuplicateAliasIsRejected() {
