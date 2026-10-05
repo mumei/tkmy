@@ -19,18 +19,31 @@ actor UsageCoordinator {
     private let calculator: UsagePriceCalculator
     private let quotaHistoryImporter: CodexUsageLimitHistoryImporter
     private let codexAccountRateLimits = CodexAccountRateLimitProvider()
+    private let claudeRateLimitFetch: @Sendable (Date) async -> ClaudeAccountRateLimitResult
     private let codex = CodexAdapter()
-    private let claude = ClaudeCodeAdapter()
+    private let claude: ClaudeCodeAdapter
     private var scanTask: Task<Void, Never>?
     private var inFlightLoads: [UsageSource: Task<SourceUsageLoadResult, Error>] = [:]
     private var usageReportCaches: [UsageSource: UsageReportCache] = [:]
     private var accountRateLimitAttemptedAt: Date?
     private var accountRateLimitSucceededAt: Date?
     private var cachedAccountRateLimits: [UsageLimitSnapshot] = []
+    private var claudeRateLimitAttemptedAt: Date?
+    private var claudeRateLimitSucceededAt: Date?
+    private var cachedClaudeRateLimits: [UsageLimitSnapshot] = []
 
-    init(store: SQLiteUsageStore, calculator: UsagePriceCalculator) {
+    init(
+        store: SQLiteUsageStore,
+        calculator: UsagePriceCalculator,
+        claudeAdapter: ClaudeCodeAdapter = ClaudeCodeAdapter(),
+        claudeRateLimitFetch: @escaping @Sendable (Date) async -> ClaudeAccountRateLimitResult = {
+            await ClaudeAccountRateLimitProvider().fetch(observedAt: $0)
+        }
+    ) {
         self.store = store
         self.calculator = calculator
+        self.claude = claudeAdapter
+        self.claudeRateLimitFetch = claudeRateLimitFetch
         self.quotaHistoryImporter = CodexUsageLimitHistoryImporter(store: store)
     }
 
@@ -185,7 +198,7 @@ actor UsageCoordinator {
         let loggedUsageLimit = source == .codex ? codex.latestUsageLimit(in: files) : nil
         let accountRateLimits = source == .codex
             ? await currentCodexAccountRateLimits(now: Date())
-            : []
+            : await currentClaudeAccountRateLimits(now: Date())
         if !accountRateLimits.isEmpty {
             try await store.upsertUsageLimits(accountRateLimits, now: Date())
         } else if let loggedUsageLimit {
@@ -241,7 +254,7 @@ actor UsageCoordinator {
             usageLimitHistory: usageLimitHistory,
             quotaTokenSummary: quotaTokenSummary
         )
-        if files.isEmpty {
+        if files.isEmpty, usageLimit == nil {
             return daily.isEmpty && usageLimitHistory.isEmpty
                 ? .sourceMissing(searchedLocations: searchedLocations(for: source))
                 : .staleSource(
@@ -362,6 +375,35 @@ actor UsageCoordinator {
         }
         cachedAccountRateLimits = []
         return []
+    }
+
+    func currentClaudeAccountRateLimits(now: Date) async -> [UsageLimitSnapshot] {
+        cachedClaudeRateLimits = cachedClaudeRateLimits.filter { ($0.resetsAt ?? .distantPast) > now }
+        if let attemptedAt = claudeRateLimitAttemptedAt,
+           now.timeIntervalSince(attemptedAt) < Self.accountRateLimitRefreshInterval {
+            return cachedClaudeRateLimits
+        }
+        claudeRateLimitAttemptedAt = now
+        switch await claudeRateLimitFetch(now) {
+        case let .available(snapshots):
+            cachedClaudeRateLimits = snapshots.filter {
+                $0.source == .claudeCode && $0.limitID == "claude-code"
+                    && ($0.windowMinutes == 300 || $0.windowMinutes == 10_080)
+                    && ($0.resetsAt ?? .distantPast) > now
+            }
+            claudeRateLimitSucceededAt = now
+        case .unavailable:
+            // Do not show the previous account's quota after auth/plan changes.
+            cachedClaudeRateLimits = []
+            claudeRateLimitSucceededAt = nil
+        case .failed:
+            if let succeededAt = claudeRateLimitSucceededAt,
+               now.timeIntervalSince(succeededAt) <= Self.accountRateLimitStaleInterval {
+                return cachedClaudeRateLimits
+            }
+            cachedClaudeRateLimits = []
+        }
+        return cachedClaudeRateLimits
     }
 
     func scheduleRefresh(_ operation: @escaping @Sendable () async -> Void) {

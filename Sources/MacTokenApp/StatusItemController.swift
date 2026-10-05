@@ -196,7 +196,8 @@ final class StatusItemController: NSObject {
             let used = Self.percentageText(limit.usedPercent)
             applyMeterStyle(remainingPercent: limit.remainingPercent, label: remaining)
 
-            var details = [L10n.text("weekly_remaining", remaining), L10n.text("used_format", used)]
+            let windowLabel = limit.windowMinutes == 300 ? "five_hour_remaining" : "weekly_remaining"
+            var details = [L10n.text(windowLabel, remaining), L10n.text("used_format", used)]
             if let resetsAt = limit.resetsAt {
                 let resetDate = resetsAt.formatted(.dateTime.month().day().locale(L10n.locale))
                 details.append(L10n.text("reset_format", resetDate))

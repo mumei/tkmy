@@ -313,7 +313,7 @@ struct UsageLimitHistoryView: View {
 
     private func bucketTitle(_ bucket: UsageLimitHistoryBucket) -> String {
         let trimmedID = bucket.limitID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let category = trimmedID.isEmpty || trimmedID.lowercased() == "codex"
+        let category = trimmedID.isEmpty || bucket.isGeneral
             ? L10n.text("quota_general")
             : L10n.text("quota_model_limit", readableLimitID(trimmedID))
         return L10n.text("quota_window_format", category, durationText(bucket.windowMinutes))

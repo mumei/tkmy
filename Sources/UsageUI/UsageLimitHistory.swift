@@ -38,6 +38,8 @@ struct UsageLimitHistoryBucket: Hashable, Identifiable {
     }
 
     var id: String { "\(limitID)|\(windowMinutes)" }
+
+    var isGeneral: Bool { ["codex", "claude-code"].contains(limitID.lowercased()) }
 }
 
 enum UsageLimitHistoryTimeline {
@@ -191,10 +193,10 @@ enum UsageLimitHistoryTimeline {
     }
 
     static func preferredBucket(in buckets: [UsageLimitHistoryBucket]) -> UsageLimitHistoryBucket? {
-        // The existing menu meter reports Codex's general (usually weekly) limit.
+        // The menu meters report each provider's general (usually weekly) limit.
         // Prefer that familiar window before exposing more specific model limits.
         buckets
-            .filter { $0.limitID.lowercased() == "codex" }
+            .filter(\.isGeneral)
             .max { $0.windowMinutes < $1.windowMinutes }
             ?? buckets.max { $0.windowMinutes < $1.windowMinutes }
     }
