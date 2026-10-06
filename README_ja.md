@@ -16,6 +16,8 @@ TKMYは端末内に保存されたJSONL形式の利用記録を読み取りま�
 
 同梱の価格表は、GPT-6.1 Sol、GPT-6 Astra／Sol／Luna、GPT-5.6 Sol／Terra／Luna、従来の対応Codexモデルに加え、Claude Fable 5.1／5、Mythos 5.1／5、Opus 5.5／5／4.8／4.7／4.6／4.5、Sonnet 5／4.6、Haiku 4.5に対応しています。OpenAIの料金は2026年9月30日に[公式料金表](https://developers.openai.com/api/docs/pricing)と[GPT-6.1 Solのモデル情報](https://developers.openai.com/api/docs/models/gpt-6.1-sol)で確認しました。Claudeの料金は2026年9月25日に[公式料金表](https://platform.claude.com/docs/en/about-claude/pricing)で確認しています。GPT-6.1 Solには標準・短文脈の料金を適用し、キャッシュ読み込みは100万トークンあたり$0.10です。`high`などの推論設定によってモデルIDは変わりません。GPT-5.6 Solには現在のキャンペーン単価、Sonnet 5には9月1日の値上げが撤回された標準単価を適用しています。Fable 5.1、Mythos 5.1、Opus 5.5には、引き下げ後のキャッシュ読み込み単価を適用します。
 
+**GPT-6.1 Solの対応状況（2026年10月6日）：** 料金変更は[PR #5](https://github.com/mumei/tkmy/pull/5)でmainに統合され、この1.0.10候補にも取り込みました。公開済み1.0.8の価格表には含まれていません。CodexのログにモデルIDとトークン数があれば表示でき、候補版では同梱の標準・短文脈料金で推定金額も計算します。ログに金額が記録されている場合は、その値を優先します。
+
 推定金額は、現在の価格表の標準単価で計算します。OpenAIモデルには短い入力向けの単価を使い、長い入力やFast／Priority処理の割増、Batch／Flex割引、地域別料金、ツール料金は加味しません。計算できるのはログから取得したトークン内訳のみで、Codexのキャッシュ作成トークンは現行の読み取り処理では取得しません。ログに金額が記録されていない過去の利用分も、現在の価格表で再計算します。金額が記録されている場合は、その値を優先します。価格表には公式情報の参照URLと取得日を記録し、料金を確認できていないモデルは算出不可として扱います。
 
 ## 動作要件
@@ -43,6 +45,16 @@ open '.build/app/TKMY.app'
 - Claude Code：`~/.claude/projects`、`~/.config/claude/projects`、`CLAUDE_CONFIG_DIR`
 
 集計データベースは`~/Library/Application Support/TKMY/usage.sqlite3`に保存します。
+
+## Claude Codeの利用枠残量
+
+インストール済みのClaude Code CLIへ、公式Agent SDKの`get_usage`読み取り要求を送って一般利用枠を取得します。Claude Codeの既存ログインを使い、モデルへのプロンプトは送りません。7日枠を優先し、5時間枠しかない場合はツールチップに「5時間利用制限」と表示します。モデル固有枠、追加利用額、コンテキスト使用率は一般利用枠と区別します。
+
+このAPIは[実験的な機能](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md#03169)です。会話ログの走査を無効にする`skip_behaviors`を確実に指定できるよう、今回確認した最も古いSDKの仕様に合わせて、Claude Code **2.1.289以降**を対象にしています。旧版、CLI未検出、未ログイン、必要なプロファイル権限がない場合、APIキーや外部プロバイダー経由の利用、取得不可の応答では「—」を表示します。認証はCLIが担当し、TKMYは認証情報を読み出したりClaudeの設定を変更したりしません。残量履歴に保存するのは割合とリセット・観測時刻だけです。
+
+`~/.local/bin`のネイティブインストール、Homebrew、TKMYの`PATH`上のCLIを検出します。別の場所にある場合は、TKMYの実行環境に`TKMY_CLAUDE_EXECUTABLE`を渡して指定できます。再集計時の要求は1分に1回までとし、取得失敗時は元の観測を最大10分、かつリセット時刻まで保持します。利用枠がないと明示された場合はキャッシュを消します。リセット後の残量を、新しい観測なしに100%と見なしません。
+
+別のMacでは、この変更を含むビルドで確認します。`claude --version`を確認し、同じClaude Codeのログインで`/usage`に一般の7日枠または5時間枠があることを確認したうえで、TKMYの「残量パーセントを表示」をONにし、Claudeメニューから「再集計」を選びます。比較するのは同じ期間の利用枠で、コンテキスト使用率やモデル固有枠ではありません。診断で共有するのはTKMY・CLIのバージョン、表示設定、`/usage`に対象枠があるか、TKMYが割合か「—」を表示するかだけで十分です。会話ログ、認証ファイル、トークン、CLIの生応答は共有しないでください。
 
 ## ドキュメント
 

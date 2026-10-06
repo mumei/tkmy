@@ -217,6 +217,7 @@ public enum L10n {
         "check_for_updates": ["Check for Updates…", "アップデートを確認…", "Nach Updates suchen…", "检查更新…", "Rechercher les mises à jour…", "업데이트 확인…", "Buscar actualizaciones…", "Controlla aggiornamenti…", "Kiểm tra cập nhật…", "ตรวจสอบอัปเดต…"],
         "quit": ["Quit TKMY", "TKMYを終了", "TKMY beenden", "退出 TKMY", "Quitter TKMY", "TKMY 종료", "Salir de TKMY", "Esci da TKMY", "Thoát TKMY", "ออกจาก TKMY"],
         "weekly_remaining": ["Weekly limit: %@ left", "週次利用制限 残り%@", "Wochenlimit: %@ übrig", "每周限制：剩余 %@", "Limite hebdomadaire : %@ restants", "주간 한도: %@ 남음", "Límite semanal: queda %@", "Limite settimanale: %@ rimasto", "Giới hạn tuần: còn %@", "ขีดจำกัดรายสัปดาห์: เหลือ %@"],
+        "five_hour_remaining": ["5-hour limit: %@ left", "5時間利用制限 残り%@", "5-Stunden-Limit: %@ übrig", "5 小时限制：剩余 %@", "Limite de 5 heures : %@ restants", "5시간 한도: %@ 남음", "Límite de 5 horas: queda %@", "Limite di 5 ore: %@ rimasto", "Giới hạn 5 giờ: còn %@", "ขีดจำกัด 5 ชั่วโมง: เหลือ %@"],
         "used_format": ["%@ used", "使用%@", "%@ verwendet", "已使用 %@", "%@ utilisés", "%@ 사용", "%@ usado", "%@ usato", "Đã dùng %@", "ใช้ไป %@"],
         "reset_format": ["Resets %@", "リセット %@", "Zurücksetzen %@", "重置 %@", "Réinitialisation %@", "재설정 %@", "Se reinicia %@", "Ripristino %@", "Đặt lại %@", "รีเซ็ต %@"],
         "today_tokens": ["Today %@ tokens", "今日 %@トークン", "Heute %@ Token", "今天 %@ 个令牌", "Aujourd’hui %@ jetons", "오늘 %@ 토큰", "Hoy %@ tokens", "Oggi %@ token", "Hôm nay %@ token", "วันนี้ %@ โทเค็น"],

@@ -308,10 +308,11 @@
         <section class="chapter" id="pricing">
           <h2>金額計算</h2>
           <p class="chapter__intro">金額は請求額ではなくUSDの推定値である。UIは必ず「推定」と表示し、価格表の日付と未算出レコードの有無を追跡可能にする。</p>
+          <p>2026年10月6日時点のGPT-6.1 Sol：<a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">公式モデルIDは<code>gpt-6.1-sol</code></a>。料金変更は<a href="https://github.com/mumei/tkmy/pull/5">PR #5</a>でmainに統合され、1.0.10候補にも取り込み済み。ログのモデルIDとトークン数を表示し、同梱の標準・短文脈料金で金額を推定する。source金額があれば優先する。正式公開版1.0.8のcatalogには含まれない。推論設定は別モデルとして扱わない。</p>
           <ol class="state-list">
             <li><strong>source</strong><span>イベントに<code>costUSD</code>相当があれば、その値を最優先する。</span></li>
             <li><strong>calculate</strong><span>source金額がなければ、model aliasを解決して入力、出力、cache create 5分／1時間、cache readの各単価を適用する。</span></li>
-            <li><strong>tier</strong><span>モデルが長文脈価格を持つ場合は、価格表に記録したthresholdと課金方式をrequest単位で適用する。</span></li>
+            <li><strong>tier</strong><span>現在は標準単価で計算し、OpenAIモデルには短い入力向けの単価を使う。長文脈・Fast／Priorityの割増、Batch／Flex割引、地域別料金、ツール料金は適用しない。</span></li>
             <li><strong>unknown</strong><span>modelまたは必要な単価が不明なら金額を<code>nil</code>とし、unknown event数とtoken数を集計する。</span></li>
             <li><strong>aggregate</strong><span>全件算出可能なら通常金額、一部不明なら「$X.XX+／一部算出不可」、全件不明なら「算出不可」とする。</span></li>
           </ol>
@@ -335,7 +336,7 @@
   let basis: CostBasis          // source | catalog | mixed
   let catalogVersion: String
 }</code></pre>
-          <div class="contract"><strong>価格表の信頼境界</strong><p>価格snapshotの取得元URL、取得日時、SHA-256、生成scriptを公開リポジトリへ保存する。自動更新PRはテストと人手reviewを通し、アプリが外部価格APIへ直接接続することはない。</p></div>
+          <div class="contract"><strong>価格表の信頼境界</strong><p>同梱catalogに公式情報の参照URLと取得日を記録する。価格変更はテストとreviewを経てアプリに同梱し、実行時に外部価格APIへ直接接続しない。</p></div>
         </section>
 
         <section class="chapter" id="storage">

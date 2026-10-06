@@ -188,6 +188,17 @@ import UsageDomain
     #expect(UsageLimitHistoryTimeline.preferredBucket(in: buckets) == UsageLimitHistoryBucket(generalWeek))
 }
 
+@Test func claudeQuotaHistoryIdentifiesGeneralWindowsAndPrefersWeekly() {
+    let now = Date()
+    let weekly = UsageLimitHistoryBucket(quota(source: .claudeCode, limitID: "claude-code", windowMinutes: 10_080, observedAt: now))
+    let fiveHour = UsageLimitHistoryBucket(quota(source: .claudeCode, limitID: "claude-code", windowMinutes: 300, observedAt: now))
+    let model = UsageLimitHistoryBucket(quota(source: .claudeCode, limitID: "seven_day_opus", windowMinutes: 10_080, observedAt: now))
+    #expect(weekly.isGeneral)
+    #expect(fiveHour.isGeneral)
+    #expect(!model.isGeneral)
+    #expect(UsageLimitHistoryTimeline.preferredBucket(in: [model, fiveHour, weekly]) == weekly)
+}
+
 @Test func quotaHistoryChartBreaksForGapsResetChangesAndRecoveries() {
     let origin = Date(timeIntervalSince1970: 1_760_000_000)
     let reset = origin.addingTimeInterval(10_000)
