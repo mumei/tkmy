@@ -308,7 +308,7 @@
         <section class="chapter" id="pricing">
           <h2>金額計算</h2>
           <p class="chapter__intro">金額は請求額ではなくUSDの推定値である。UIは必ず「推定」と表示し、価格表の日付と未算出レコードの有無を追跡可能にする。</p>
-          <p>2026年10月5日時点のGPT-6.1 Sol：<a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">公式モデルIDは<code>gpt-6.1-sol</code></a>。ログに含まれるモデルIDとトークン数は表示できる。料金は1.0.9向けの<a href="https://github.com/mumei/tkmy/pull/5">PR #5</a>で準備中で、公開済み1.0.8とClaude残量表示の1.0.10候補には未取り込み。source金額がない場合は算出不可とする。推論設定は別モデルとして扱わない。</p>
+          <p>2026年10月6日時点のGPT-6.1 Sol：<a href="https://developers.openai.com/api/docs/models/gpt-6.1-sol">公式モデルIDは<code>gpt-6.1-sol</code></a>。料金変更は<a href="https://github.com/mumei/tkmy/pull/5">PR #5</a>でmainに統合され、1.0.10候補にも取り込み済み。ログのモデルIDとトークン数を表示し、同梱の標準・短文脈料金で金額を推定する。source金額があれば優先する。正式公開版1.0.8のcatalogには含まれない。推論設定は別モデルとして扱わない。</p>
           <ol class="state-list">
             <li><strong>source</strong><span>イベントに<code>costUSD</code>相当があれば、その値を最優先する。</span></li>
             <li><strong>calculate</strong><span>source金額がなければ、model aliasを解決して入力、出力、cache create 5分／1時間、cache readの各単価を適用する。</span></li>
