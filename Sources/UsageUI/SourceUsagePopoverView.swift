@@ -96,16 +96,14 @@ public struct SourceUsagePopoverView: View {
             Text(expectedSource.displayName)
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
 
-            if expectedSource == .codex {
-                Picker(L10n.text("usage_pane"), selection: $selectedPane) {
-                    ForEach(UsagePopoverPane.allCases) { pane in
-                        Text(L10n.text(pane.localizationKey)).tag(pane)
-                    }
+            Picker(L10n.text("usage_pane"), selection: $selectedPane) {
+                ForEach(UsagePopoverPane.allCases) { pane in
+                    Text(L10n.text(pane.localizationKey)).tag(pane)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 340)
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 340)
 
             Spacer()
 
@@ -214,10 +212,10 @@ public struct SourceUsagePopoverView: View {
 
     private func loadedContent(notice: String?) -> some View {
         VStack(alignment: .leading, spacing: Layout.contentSpacing) {
-            if selectedPane == .quotaHistory, expectedSource == .codex {
+            if selectedPane == .quotaHistory {
                 UsageLimitHistoryView(
                     history: viewModel.usageLimitHistory,
-                    source: .codex,
+                    source: expectedSource,
                     range: $viewModel.selectedQuotaHistoryRange,
                     selectedBucketID: $viewModel.selectedQuotaHistoryBucketID,
                     quotaTokenSummary: viewModel.quotaTokenSummary,

@@ -8,8 +8,8 @@ import UsageDomain
 @Suite(.serialized)
 @MainActor
 struct QuotaHistorySelectionTests {
-    @Test("Quota-history range and window survive refresh states and root replacement")
-    func quotaHistorySelectionSurvivesRefreshesAndParentReplacement() throws {
+    @Test("Quota-history range and window survive refresh states and root replacement", arguments: [UsageSource.codex, .claudeCode])
+    func quotaHistorySelectionSurvivesRefreshesAndParentReplacement(source: UsageSource) throws {
         let defaults = UserDefaults.standard
         let previousLanguage = defaults.object(forKey: L10n.defaultsKey)
         defer {
@@ -23,20 +23,20 @@ struct QuotaHistorySelectionTests {
         defaults.synchronize()
         _ = NSApplication.shared
 
-        for dailyUsage in [[], quotaHistoryDailyUsageFixture()] {
+        for dailyUsage in [[], quotaHistoryDailyUsageFixture(source: source)] {
             let now = Date()
-            let history = quotaHistorySelectionFixture(now: now)
-            let snapshot = quotaHistorySnapshot(history: history, dailyUsage: dailyUsage, refreshedAt: now)
-            let viewModel = SourceUsageViewModel(source: .codex)
+            let history = quotaHistorySelectionFixture(source: source, now: now)
+            let snapshot = quotaHistorySnapshot(source: source, history: history, dailyUsage: dailyUsage, refreshedAt: now)
+            let viewModel = SourceUsageViewModel(source: source)
             viewModel.apply(.ready(snapshot))
             let expectedBucketID = try #require(
                 UsageLimitHistoryTimeline.buckets(
                     from: history,
-                    source: .codex,
+                    source: source,
                     range: .sixHours,
                     now: Date()
                 )
-                .first(where: { $0.limitID == "gpt-test" })?
+                .first(where: { $0.windowMinutes == 10_080 })?
                 .id,
                 "The fixture must expose a distinct quota window"
             )
@@ -70,12 +70,14 @@ struct QuotaHistorySelectionTests {
 
                 let refreshes: [SourceUsageLoadResult] = [
                     .ready(quotaHistorySnapshot(
+                        source: source,
                         history: history,
                         dailyUsage: dailyUsage,
                         refreshedAt: now.addingTimeInterval(60)
                     )),
                     .partialFailure(
                         snapshot: quotaHistorySnapshot(
+                            source: source,
                             history: history,
                             dailyUsage: dailyUsage,
                             refreshedAt: now.addingTimeInterval(120)
@@ -84,6 +86,7 @@ struct QuotaHistorySelectionTests {
                     ),
                     .staleSource(
                         snapshot: quotaHistorySnapshot(
+                            source: source,
                             history: history,
                             dailyUsage: dailyUsage,
                             refreshedAt: now.addingTimeInterval(180)
@@ -158,7 +161,7 @@ private final class QuotaHistorySelectionRender {
         hostingView.rootView = AnyView(
             SourceUsagePopoverView(
                 viewModel: viewModel,
-                expectedSource: .codex,
+                expectedSource: viewModel.source,
                 initialPane: .quotaHistory,
                 quotaHistoryChartRangeObserver: { [capture] range in
                     capture.lastRange = range
@@ -208,37 +211,38 @@ private func assertSelectedQuotaHistory(
 }
 
 private func quotaHistorySnapshot(
+    source: UsageSource,
     history: [UsageLimitSnapshot],
     dailyUsage: [DailyUsage],
     refreshedAt: Date
 ) -> SourceUsageSnapshot {
     SourceUsageSnapshot(
-        source: .codex,
+        source: source,
         dailyUsage: dailyUsage,
         refreshedAt: refreshedAt,
         usageLimitHistory: history
     )
 }
 
-private func quotaHistoryDailyUsageFixture() -> [DailyUsage] {
+private func quotaHistoryDailyUsageFixture(source: UsageSource) -> [DailyUsage] {
     [DailyUsage(
         day: Calendar.current.startOfDay(for: Date()),
-        source: .codex,
+        source: source,
         tokens: TokenBreakdown(input: 1_000, output: 200),
         knownCostMicrosUSD: 0,
         unknownCostEventCount: 0
     )]
 }
 
-private func quotaHistorySelectionFixture(now: Date) -> [UsageLimitSnapshot] {
+private func quotaHistorySelectionFixture(source: UsageSource, now: Date) -> [UsageLimitSnapshot] {
     let definitions: [(String, Int, Double)] = [
-        ("codex", 300, 15),
-        ("gpt-test", 60, 36),
+        (source == .codex ? "codex" : "claude-code", 300, 15),
+        (source == .codex ? "codex" : "claude-code", 10_080, 36),
     ]
     return definitions.flatMap { limitID, windowMinutes, startingPercent in
         (0..<8).map { index in
             UsageLimitSnapshot(
-                source: .codex,
+                source: source,
                 limitID: limitID,
                 usedPercent: startingPercent + Double(index),
                 windowMinutes: windowMinutes,
