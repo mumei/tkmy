@@ -27,7 +27,8 @@ struct UsageLimitHistoryChartSeries {
     static func make(
         observations input: [UsageLimitSnapshot],
         range: UsageLimitHistoryRange,
-        now: Date
+        now: Date,
+        extendLatest: Bool = true
     ) -> Self {
         let cutoff = now.addingTimeInterval(-range.interval)
         let valid = input
@@ -70,7 +71,7 @@ struct UsageLimitHistoryChartSeries {
             ))
         }
 
-        if let latest = valid.max(by: { lhs, rhs in
+        if extendLatest, let latest = valid.max(by: { lhs, rhs in
             if lhs.lastObservedAt != rhs.lastObservedAt { return lhs.lastObservedAt < rhs.lastObservedAt }
             return lhs.observedAt < rhs.observedAt
         }), let extensionEnd = extensionEnd(for: latest, now: now), latest.lastObservedAt < extensionEnd {

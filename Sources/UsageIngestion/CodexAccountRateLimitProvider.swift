@@ -50,12 +50,41 @@ public struct CodexAccountRateLimitProvider: Sendable {
         return []
     }
 
-    private static func fetchSynchronously(
-        executableURL: URL,
-        environment: [String: String],
-        timeout: TimeInterval,
-        observedAt: Date
-    ) -> [UsageLimitSnapshot] {
+    public func identity() async -> QuotaAccount? {
+        guard let executableURL else { return nil }
+        return await Task.detached(priority: .utility) {
+            Self.readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: Date(), identityOnly: true)?.0
+        }.value
+    }
+
+    public func fetchIdentified(observedAt: Date = Date()) async -> (account: QuotaAccount, snapshots: [UsageLimitSnapshot])? {
+        guard let executableURL else { return nil }
+        return await Task.detached(priority: .utility) {
+            guard let result = Self.readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: false),
+                  let after = Self.readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: true)?.0,
+                  result.0.id == after.id else { return nil }
+            return (account: after, snapshots: result.1.map(after.assigning))
+        }.value
+    }
+
+    static func account(from data: Data) -> QuotaAccount? {
+        guard let object = IngestionSupport.jsonObject(data),
+              let result = object["result"] as? [String: Any],
+              let account = result["account"] as? [String: Any],
+              account["type"] as? String == "chatgpt",
+              let email = account["email"] as? String,
+              !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        if let plan = account["planType"], !(plan is NSNull), !(plan is String) { return nil }
+        // Public account/read exposes email, not a stable workspace/account ID.
+        return QuotaAccount(source: .codex, email: email, subscriptionType: account["planType"] as? String)
+    }
+
+    private static func fetchSynchronously(executableURL: URL, environment: [String: String], timeout: TimeInterval, observedAt: Date) -> [UsageLimitSnapshot] {
+        readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: false)?.1 ?? []
+    }
+
+    private static func readSession(executableURL: URL, environment: [String: String], timeout: TimeInterval, observedAt: Date, identityOnly: Bool) -> (QuotaAccount, [UsageLimitSnapshot])? {
         let process = Process()
         let input = Pipe()
         let output = Pipe()
@@ -65,69 +94,44 @@ public struct CodexAccountRateLimitProvider: Sendable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        var childEnvironment = environment
-        childEnvironment["RUST_LOG"] = "error"
-        childEnvironment["NO_COLOR"] = "1"
-        process.environment = childEnvironment
+        process.environment = environment.merging(["RUST_LOG": "error", "NO_COLOR": "1"]) { _, new in new }
         output.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                collector.finish()
-                return
-            }
-            let accumulated = collector.append(chunk)
-            if !snapshots(from: accumulated, observedAt: observedAt).isEmpty {
-                collector.finish()
-            }
+            if chunk.isEmpty { collector.finish() } else { collector.append(chunk) }
         }
-        process.terminationHandler = { _ in collector.finish() }
-
-        do {
-            try process.run()
-            try input.fileHandleForWriting.write(contentsOf: requestData())
-        } catch {
-            if process.isRunning { process.terminate() }
+        defer {
             try? input.fileHandleForWriting.close()
             output.fileHandleForReading.readabilityHandler = nil
-            return []
-        }
-
-        _ = collector.wait(timeout: timeout)
-        try? input.fileHandleForWriting.close()
-        output.fileHandleForReading.readabilityHandler = nil
-        if process.isRunning {
-            process.terminate()
-            let terminationDeadline = Date().addingTimeInterval(1)
-            while process.isRunning, Date() < terminationDeadline {
-                Thread.sleep(forTimeInterval: 0.02)
+            if process.isRunning {
+                process.terminate()
+                let deadline = Date().addingTimeInterval(1)
+                while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+                if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
             }
-            if process.isRunning, process.processIdentifier > 0 {
-                Darwin.kill(process.processIdentifier, SIGKILL)
-            }
+            if process.processIdentifier > 0 { process.waitUntilExit() }
         }
-        process.waitUntilExit()
-        return snapshots(from: collector.data, observedAt: observedAt)
-    }
-
-    private static func requestData() throws -> Data {
-        let messages: [[String: Any]] = [
-            [
-                "id": 1,
-                "method": "initialize",
-                "params": [
-                    "clientInfo": ["name": "tkmy", "title": "TKMY", "version": "1"],
-                    "capabilities": [:],
-                ],
-            ],
-            ["method": "initialized"],
-            ["id": 2, "method": "account/rateLimits/read", "params": NSNull()],
-        ]
-        var data = Data()
-        for message in messages {
-            data.append(try JSONSerialization.data(withJSONObject: message))
+        func send(_ message: [String: Any]) throws {
+            var data = try JSONSerialization.data(withJSONObject: message)
             data.append(0x0A)
+            try input.fileHandleForWriting.write(contentsOf: data)
         }
-        return data
+        do {
+            try process.run()
+            let deadline = Date().addingTimeInterval(timeout)
+            try send(["id": 1, "method": "initialize", "params": ["clientInfo": ["name": "tkmy", "title": "TKMY", "version": "1"], "capabilities": [:]]])
+            guard let initialized = collector.wait(for: 1, until: deadline),
+                  IngestionSupport.jsonObject(initialized)?["error"] == nil else { return nil }
+            try send(["method": "initialized"])
+            try send(["id": 3, "method": "account/read", "params": ["refreshToken": false]])
+            guard let beforeData = collector.wait(for: 3, until: deadline), let before = account(from: beforeData) else { return nil }
+            if identityOnly { return (before, []) }
+            try send(["id": 2, "method": "account/rateLimits/read", "params": NSNull()])
+            guard let quotaData = collector.wait(for: 2, until: deadline) else { return nil }
+            try send(["id": 4, "method": "account/read", "params": ["refreshToken": false]])
+            guard let afterData = collector.wait(for: 4, until: deadline), let after = account(from: afterData),
+                  before.id == after.id, !collector.accountChanged else { return nil }
+            return (after, snapshots(from: quotaData, observedAt: observedAt))
+        } catch { return nil }
     }
 
     private static func snapshots(
@@ -212,30 +216,36 @@ public struct CodexAccountRateLimitProvider: Sendable {
 private final class CodexRateLimitOutputCollector: @unchecked Sendable {
     private let lock = NSLock()
     private let semaphore = DispatchSemaphore(value: 0)
-    private var storage = Data()
-    private var isFinished = false
+    private var remainder = Data()
+    private var responses: [Int: Data] = [:]
+    private var receivedBytes = 0
+    private var finished = false
+    private var changed = false
+    var accountChanged: Bool { lock.withLock { changed } }
 
-    var data: Data {
-        lock.withLock { storage }
-    }
-
-    func append(_ data: Data) -> Data {
+    func append(_ data: Data) {
         lock.withLock {
-            storage.append(data)
-            return storage
+            guard !finished else { return }
+            receivedBytes += data.count
+            guard receivedBytes <= 1_048_576 else { finished = true; return }
+            remainder.append(data)
+            while let newline = remainder.firstIndex(of: 0x0A) {
+                let line = Data(remainder[..<newline])
+                remainder.removeSubrange(...newline)
+                guard let object = IngestionSupport.jsonObject(line) else { continue }
+                if object["method"] as? String == "account/updated" { changed = true }
+                if let id = object["id"] as? Int, (1...4).contains(id) { responses[id] = line }
+            }
         }
+        semaphore.signal()
     }
-
-    func finish() {
-        let shouldSignal = lock.withLock {
-            guard !isFinished else { return false }
-            isFinished = true
-            return true
+    func finish() { lock.withLock { finished = true }; semaphore.signal() }
+    func wait(for id: Int, until deadline: Date) -> Data? {
+        while true {
+            let state = lock.withLock { (responses[id], finished) }
+            if let response = state.0 { return response }
+            guard !state.1, deadline > Date(),
+                  semaphore.wait(timeout: .now() + deadline.timeIntervalSinceNow) == .success else { return nil }
         }
-        if shouldSignal { semaphore.signal() }
-    }
-
-    func wait(timeout: TimeInterval) -> DispatchTimeoutResult {
-        semaphore.wait(timeout: .now() + timeout)
     }
 }

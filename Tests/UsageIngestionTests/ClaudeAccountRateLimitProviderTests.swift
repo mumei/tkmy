@@ -79,6 +79,7 @@ private func claudeWindow(_ used: Any, reset: Any? = nil) -> [String: Any] {
     let response = String(decoding: try claudeQuotaResponse(["rate_limits_available": true, "rate_limits": ["seven_day": claudeWindow(41)]]), as: UTF8.self)
     try Data("""
     #!/bin/sh
+    if [ "$1" = "auth" ]; then echo '{"loggedIn":true,"authMethod":"claude.ai","email":"test@example.com","orgId":null}'; exit 0; fi
     if [ "$1" = "--version" ]; then echo '2.1.289 (Claude Code)'; exit 0; fi
     case " $* " in *" --no-session-persistence "*) ;; *) exit 1;; esac
     case " $* " in *" --setting-sources= "*) ;; *) exit 1;; esac
@@ -94,9 +95,11 @@ private func claudeWindow(_ used: Any, reset: Any? = nil) -> [String: Any] {
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
     let provider = ClaudeAccountRateLimitProvider(executableURL: executable, environment: ["PATH": "/bin:/usr/bin"], timeout: 3)
     let start = Date()
-    guard case let .available(snapshots) = await provider.fetch(observedAt: claudeQuotaNow) else {
+    guard case let .identified(account, snapshots) = await provider.fetch(observedAt: claudeQuotaNow) else {
         Issue.record("Expected fake CLI response"); return
     }
+    #expect(account.email == "test@example.com")
+    #expect(snapshots.first?.limitID == account.limitID)
     #expect(snapshots.first?.remainingPercent == 59)
     #expect(Date().timeIntervalSince(start) < 2)
 }
@@ -106,11 +109,13 @@ private func claudeWindow(_ used: Any, reset: Any? = nil) -> [String: Any] {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let executable = directory.appendingPathComponent("claude")
-    try Data("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '2.1.289 (Claude Code)'; exit 0; fi\nexec sleep 10\n".utf8).write(to: executable)
+    try Data("#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"email\":\"test@example.com\"}'; exit 0; fi\nif [ \"$1\" = \"--version\" ]; then echo '2.1.289 (Claude Code)'; exit 0; fi\nexec sleep 10\n".utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
     let start = Date()
     let result = await ClaudeAccountRateLimitProvider(executableURL: executable, environment: ["PATH": "/bin:/usr/bin"], timeout: 1).fetch()
-    #expect(result == .failed)
+    // A timeout in the usage channel is failed; an identity read that cannot
+    // be verified is unavailable. Neither may return an invented allowance.
+    #expect(result == .failed || result == .unavailable)
     #expect(Date().timeIntervalSince(start) < 3)
 }
 
@@ -119,7 +124,7 @@ private func claudeWindow(_ used: Any, reset: Any? = nil) -> [String: Any] {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let executable = directory.appendingPathComponent("claude")
-    try Data("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '2.1.76 (Claude Code)'; exit 0; fi\nexit 42\n".utf8).write(to: executable)
+    try Data("#!/bin/sh\nif [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"email\":\"test@example.com\"}'; exit 0; fi\nif [ \"$1\" = \"--version\" ]; then echo '2.1.76 (Claude Code)'; exit 0; fi\nexit 42\n".utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
     let result = await ClaudeAccountRateLimitProvider(executableURL: executable, environment: ["PATH": "/bin:/usr/bin"], timeout: 1).fetch()
     #expect(result == .unavailable)

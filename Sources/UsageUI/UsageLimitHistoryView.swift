@@ -13,7 +13,17 @@ enum UsagePopoverPane: String, CaseIterable, Identifiable, Hashable {
 
 struct UsageLimitHistoryView: View {
     let history: [UsageLimitSnapshot]
-    private let displayHistory: [UsageLimitSnapshot]
+    let accounts: [QuotaAccount]
+    let activeAccountID: String?
+    @Binding private var selectedAccountID: String?
+    private var effectiveAccountID: String { selectedAccountID ?? activeAccountID ?? "anonymous" }
+    private var displayHistory: [UsageLimitSnapshot] {
+        UsageLimitHistoryTimeline.confirmedHistory(from: history.filter {
+            ($0.quotaAccountID ?? "anonymous") == effectiveAccountID
+        })
+    }
+    private var isCurrentAccount: Bool { effectiveAccountID == activeAccountID }
+
     let source: UsageSource
     let quotaTokenSummary: QuotaTokenSummary?
     let layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)?
@@ -29,11 +39,16 @@ struct UsageLimitHistoryView: View {
         range: Binding<UsageLimitHistoryRange>,
         selectedBucketID: Binding<String?>,
         quotaTokenSummary: QuotaTokenSummary? = nil,
+        accounts: [QuotaAccount] = [],
+        activeAccountID: String? = nil,
+        selectedAccountID: Binding<String?> = .constant(nil),
         layoutObserver: ((QuotaHistoryLayoutMetrics) -> Void)? = nil,
         chartRangeObserver: ((UsageLimitHistoryRange) -> Void)? = nil
     ) {
         self.history = history
-        self.displayHistory = UsageLimitHistoryTimeline.confirmedHistory(from: history)
+        self.accounts = accounts.filter { $0.source == source }
+        self.activeAccountID = activeAccountID
+        _selectedAccountID = selectedAccountID
         self.source = source
         self.quotaTokenSummary = quotaTokenSummary
         self.layoutObserver = layoutObserver
@@ -51,23 +66,23 @@ struct UsageLimitHistoryView: View {
             ?? UsageLimitHistoryTimeline.preferredBucket(in: buckets)
     }
     private var observations: [UsageLimitSnapshot] {
-        guard let selectedBucket else { return [] }
-        return UsageLimitHistoryTimeline.observations(
-            from: displayHistory,
-            source: source,
-            bucket: selectedBucket,
-            range: range,
-            now: now
-        )
+        buckets.flatMap { bucket in
+            UsageLimitHistoryTimeline.observations(from: displayHistory, source: source, bucket: bucket, range: range, now: now)
+        }.sorted {
+            if $0.observedAt != $1.observedAt { return $0.observedAt < $1.observedAt }
+            return $0.windowMinutes < $1.windowMinutes
+        }
+    }
+    private var paceObservations: [UsageLimitSnapshot] {
+        observations.filter { UsageLimitHistoryBucket($0) == selectedBucket }
     }
     private var lastConfirmedAt: Date? {
         chartObservations.map(\.lastObservedAt).filter { $0 <= now }.max()
     }
     private var chartObservations: [UsageLimitSnapshot] {
-        guard let selectedBucket else { return [] }
-        return UsageLimitHistoryTimeline.chartObservations(
-            from: displayHistory, source: source, bucket: selectedBucket, range: range, now: now
-        )
+        buckets.flatMap { bucket in
+            UsageLimitHistoryTimeline.chartObservations(from: displayHistory, source: source, bucket: bucket, range: range, now: now)
+        }
     }
     private var consumptionPace: QuotaConsumptionPace? {
         // Prefer a shared time/token interval once two actual changes have
@@ -76,14 +91,14 @@ struct UsageLimitHistoryView: View {
            let bucket = selectedBucket,
            let coverageStart = summary.coverageStartedAt,
            let coveredPace = QuotaConsumptionPace.latest(
-               in: observations, range: range, now: now, minimumStartedAt: coverageStart
+               in: paceObservations, range: range, now: now, minimumStartedAt: coverageStart
            ),
            summary.tokens(
                fromExclusive: coveredPace.startedAt, through: coveredPace.endedAt, limitID: bucket.limitID
            ) != nil {
             return coveredPace
         }
-        return QuotaConsumptionPace.latest(in: observations, range: range, now: now)
+        return QuotaConsumptionPace.latest(in: paceObservations, range: range, now: now)
     }
 
     var body: some View {
@@ -104,6 +119,9 @@ struct UsageLimitHistoryView: View {
                 .reportQuotaFrame(.rangePicker)
             }
 
+            accountPicker
+            Text(L10n.text(isCurrentAccount ? "quota_account_current" : "quota_account_last_observed"))
+                .font(.caption2).foregroundStyle(.secondary)
             if buckets.isEmpty {
                 ContentUnavailableView(
                     L10n.text("quota_history_empty_title"),
@@ -112,15 +130,7 @@ struct UsageLimitHistoryView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Picker(L10n.text("quota_window"), selection: $selectedBucketID) {
-                    ForEach(buckets) { bucket in
-                        Text(bucketTitle(bucket)).tag(Optional(bucket.id))
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .reportQuotaFrame(.windowPicker)
+                legend.reportQuotaFrame(.windowPicker)
                 if chartObservations.isEmpty {
                     ContentUnavailableView(
                         L10n.text("quota_history_empty_title"),
@@ -133,6 +143,7 @@ struct UsageLimitHistoryView: View {
                         observations: chartObservations,
                         range: range,
                         now: now,
+                        extendsLatestObservation: isCurrentAccount,
                         rangeObserver: chartRangeObserver
                     )
                         .frame(height: 148)
@@ -157,12 +168,62 @@ struct UsageLimitHistoryView: View {
         .onAppear(perform: synchronizeSelectedBucket)
         .onChange(of: range) { _, _ in synchronizeSelectedBucket() }
         .onChange(of: history) { _, _ in synchronizeSelectedBucket() }
+        .onChange(of: selectedAccountID) { _, _ in synchronizeSelectedBucket() }
     }
+
+    private var accountPicker: some View {
+        Picker(L10n.text("quota_account"), selection: $selectedAccountID) {
+            Text(L10n.text("quota_account_unknown")).tag(Optional("anonymous"))
+            ForEach(accounts) { account in
+                Text(account.displayName).tag(Optional(account.id))
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel(L10n.text("quota_account"))
+    }
+
+    private var legend: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ForEach(legendBuckets) { bucket in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Circle().fill(UsageLimitHistoryChart.color(for: bucket)).frame(width: 7, height: 7)
+                        Text(bucketTitle(bucket))
+                        Text(latestObservation(for: bucket).map { percentage($0.remainingPercent) } ?? "—")
+                            .monospacedDigit()
+                    }
+                    if let latest = latestObservation(for: bucket) {
+                        Text(timestamp(latest.lastObservedAt)).foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var legendBuckets: [UsageLimitHistoryBucket] {
+        var values = buckets
+        let limitID = accounts.first { $0.id == effectiveAccountID }?.limitID
+            ?? (source == .codex ? "codex" : "claude-code")
+        for minutes in [300, 10_080] where !values.contains(where: { $0.windowMinutes == minutes && $0.isGeneral }) {
+            values.append(UsageLimitHistoryBucket(limitID: limitID, windowMinutes: minutes))
+        }
+        return values.sorted { $0.windowMinutes < $1.windowMinutes }
+    }
+
+    private func latestObservation(for bucket: UsageLimitHistoryBucket) -> UsageLimitSnapshot? {
+        chartObservations.filter { UsageLimitHistoryBucket($0) == bucket }.max { $0.lastObservedAt < $1.lastObservedAt }
+    }
+
+    private var paceWindowTitle: String { selectedBucket.map { durationText($0.windowMinutes) + " · " } ?? "" }
 
     private var tokenSummary: some View {
         VStack(alignment: .leading, spacing: 2) {
             if let pace = consumptionPace {
-                Text(L10n.text(
+                Text(paceWindowTitle + L10n.text(
                     "quota_pace_average_format",
                     QuotaConfirmationDuration.text(duration: pace.secondsPerPercentagePoint)
                 ))
@@ -198,7 +259,7 @@ struct UsageLimitHistoryView: View {
                     Spacer(minLength: 0)
                 }
             } else {
-                Text(L10n.text("quota_pace_insufficient"))
+                Text(paceWindowTitle + L10n.text("quota_pace_insufficient"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -236,7 +297,7 @@ struct UsageLimitHistoryView: View {
     }
 
     private func tokenBreakdown(for pace: QuotaConsumptionPace) -> TokenBreakdown? {
-        guard let bucket = selectedBucket else { return nil }
+        guard effectiveAccountID == "anonymous", let bucket = selectedBucket else { return nil }
         return quotaTokenSummary?.tokens(
             fromExclusive: pace.startedAt, through: pace.endedAt, limitID: bucket.limitID
         )
@@ -280,7 +341,8 @@ struct UsageLimitHistoryView: View {
                                 Text(timestamp(observation.observedAt))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
-                                Text(elapsedSincePrevious(at: index, in: tableObservations))
+                                Text(durationText(observation.windowMinutes) + " · " + elapsedSincePrevious(at: index, in: tableObservations))
+                                    .foregroundStyle(UsageLimitHistoryChart.color(for: UsageLimitHistoryBucket(observation)))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -341,12 +403,11 @@ struct UsageLimitHistoryView: View {
     }
 
     private func elapsedSincePrevious(at index: Int, in observations: [UsageLimitSnapshot]) -> String {
-        guard index > observations.startIndex else {
+        let current = observations[index]
+        guard let previous = observations.prefix(index).last(where: { UsageLimitHistoryBucket($0) == UsageLimitHistoryBucket(current) }) else {
             return L10n.text("quota_first_observation")
         }
-        let elapsed = max(0.001, observations[index].observedAt.timeIntervalSince(
-            observations[observations.index(before: index)].observedAt
-        ))
+        let elapsed = max(0.001, current.observedAt.timeIntervalSince(previous.observedAt))
         return L10n.text(
             "quota_since_previous_format",
             QuotaConfirmationDuration.text(duration: elapsed)
