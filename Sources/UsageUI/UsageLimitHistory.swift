@@ -37,9 +37,14 @@ struct UsageLimitHistoryBucket: Hashable, Identifiable {
         windowMinutes = observation.windowMinutes
     }
 
+    init(limitID: String, windowMinutes: Int) {
+        self.limitID = limitID
+        self.windowMinutes = windowMinutes
+    }
+
     var id: String { "\(limitID)|\(windowMinutes)" }
 
-    var isGeneral: Bool { ["codex", "claude-code"].contains(limitID.lowercased()) }
+    var isGeneral: Bool { ["codex", "claude-code"].contains(limitID.lowercased()) || limitID.hasPrefix("codex@") || limitID.hasPrefix("claude-code@") }
 }
 
 enum UsageLimitHistoryTimeline {

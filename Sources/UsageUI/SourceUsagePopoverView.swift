@@ -219,6 +219,9 @@ public struct SourceUsagePopoverView: View {
                     range: $viewModel.selectedQuotaHistoryRange,
                     selectedBucketID: $viewModel.selectedQuotaHistoryBucketID,
                     quotaTokenSummary: viewModel.quotaTokenSummary,
+                    accounts: viewModel.quotaAccounts,
+                    activeAccountID: viewModel.activeQuotaAccountID,
+                    selectedAccountID: $viewModel.selectedQuotaAccountID,
                     chartRangeObserver: quotaHistoryChartRangeObserver
                 )
             } else {

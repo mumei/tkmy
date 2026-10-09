@@ -58,13 +58,14 @@ struct UsageLimitHistoryChart: View {
     let observations: [UsageLimitSnapshot]
     let range: UsageLimitHistoryRange
     let now: Date
+    var extendsLatestObservation = true
     var rangeObserver: ((UsageLimitHistoryRange) -> Void)? = nil
 
     var body: some View {
         GeometryReader { _ in
             let cutoff = now.addingTimeInterval(-range.interval)
             let ticks = UsageLimitHistoryChartAxis.tickDates(for: range, now: now)
-            let series = UsageLimitHistoryChartSeries.make(observations: observations, range: range, now: now)
+            let series = Self.series(observations: observations, range: range, now: now, extendLatest: extendsLatestObservation)
             Canvas { context, size in
                 let chartRect = CGRect(
                     x: 30,
@@ -83,7 +84,9 @@ struct UsageLimitHistoryChart: View {
 
                 var plotContext = context
                 plotContext.clip(to: Path(chartRect))
-                drawSeries(series, in: &plotContext, cutoff: cutoff, chartRect: chartRect)
+                for (bucket, values) in series {
+                    drawSeries(values, color: Self.color(for: bucket), in: &plotContext, cutoff: cutoff, chartRect: chartRect)
+                }
 
                 for (index, tick) in ticks.enumerated() {
                     let x = xPosition(tick, cutoff: cutoff, in: chartRect)
@@ -104,6 +107,21 @@ struct UsageLimitHistoryChart: View {
         .onChange(of: range) { _, range in rangeObserver?(range) }
     }
 
+    static func series(observations: [UsageLimitSnapshot], range: UsageLimitHistoryRange, now: Date, extendLatest: Bool) -> [(UsageLimitHistoryBucket, UsageLimitHistoryChartSeries)] {
+        let groups = Dictionary(grouping: observations, by: UsageLimitHistoryBucket.init)
+        return groups.keys.sorted { $0.id < $1.id }.map { bucket in
+            (bucket, UsageLimitHistoryChartSeries.make(observations: groups[bucket] ?? [], range: range, now: now, extendLatest: extendLatest))
+        }
+    }
+
+    static func color(for bucket: UsageLimitHistoryBucket) -> Color {
+        switch bucket.windowMinutes {
+        case 300: .blue
+        case 10_080: .orange
+        default: .purple
+        }
+    }
+
     private func drawGrid(in context: inout GraphicsContext, chartRect: CGRect) {
         for level in [0.0, 25.0, 50.0, 75.0, 100.0] {
             let y = yPosition(level, in: chartRect)
@@ -120,6 +138,7 @@ struct UsageLimitHistoryChart: View {
 
     private func drawSeries(
         _ series: UsageLimitHistoryChartSeries,
+        color: Color,
         in context: inout GraphicsContext,
         cutoff: Date,
         chartRect: CGRect
@@ -131,13 +150,13 @@ struct UsageLimitHistoryChart: View {
         }
         // Reference connections share the requested solid line style; only
         // real observations receive markers or enter the table/calculations.
-        context.stroke(path, with: .color(.accentColor), lineWidth: 2)
+        context.stroke(path, with: .color(color), lineWidth: 2)
 
         for observation in series.observations {
             let point = point(observation, cutoff: cutoff, in: chartRect)
             context.fill(
                 Path(ellipseIn: CGRect(x: point.x - 2.5, y: point.y - 2.5, width: 5, height: 5)),
-                with: .color(.accentColor)
+                with: .color(color)
             )
         }
     }

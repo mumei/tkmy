@@ -415,7 +415,7 @@ import UsageDomain
         contentSignature: "preserved-signature",
         parserVersion: 4
     ))
-    #expect(try sqliteInteger(at: url, sql: "PRAGMA user_version") == 4)
+    #expect(try sqliteInteger(at: url, sql: "PRAGMA user_version") == 5)
 
     let backups = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         .filter { $0.lastPathComponent.contains(".schema3-backup-") && $0.pathExtension == "sqlite3" }

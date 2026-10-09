@@ -84,10 +84,15 @@ import UsageDomain
     try Data("""
     #!/bin/sh
     read first
+    echo '{"id":1,"result":{}}'
     read second
     read third
+    echo '{"id":3,"result":{"account":{"type":"chatgpt","email":"test@example.com","planType":"plus"}}}'
+    read fourth
     echo '{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":49,"windowDurationMins":10080}}}}'
-    sleep 30
+    read fifth
+    echo '{"id":4,"result":{"account":{"type":"chatgpt","email":"test@example.com","planType":"plus"}}}'
+    exec sleep 30
     """.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
 

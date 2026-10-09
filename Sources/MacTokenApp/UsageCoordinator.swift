@@ -18,7 +18,10 @@ actor UsageCoordinator {
     private let store: SQLiteUsageStore
     private let calculator: UsagePriceCalculator
     private let quotaHistoryImporter: CodexUsageLimitHistoryImporter
-    private let codexAccountRateLimits = CodexAccountRateLimitProvider()
+    private let codexIdentityFetch: @Sendable () async -> QuotaAccount?
+    private let codexRateLimitFetch: @Sendable (Date) async -> (account: QuotaAccount, snapshots: [UsageLimitSnapshot])?
+    private let claudeIdentityFetch: @Sendable () async -> QuotaAccount?
+    private var activeAccounts: [UsageSource: QuotaAccount] = [:]
     private let claudeRateLimitFetch: @Sendable (Date) async -> ClaudeAccountRateLimitResult
     private let codex = CodexAdapter()
     private let claude: ClaudeCodeAdapter
@@ -36,6 +39,9 @@ actor UsageCoordinator {
         store: SQLiteUsageStore,
         calculator: UsagePriceCalculator,
         claudeAdapter: ClaudeCodeAdapter = ClaudeCodeAdapter(),
+        codexIdentityFetch: @escaping @Sendable () async -> QuotaAccount? = { await CodexAccountRateLimitProvider().identity() },
+        codexRateLimitFetch: @escaping @Sendable (Date) async -> (account: QuotaAccount, snapshots: [UsageLimitSnapshot])? = { await CodexAccountRateLimitProvider().fetchIdentified(observedAt: $0) },
+        claudeIdentityFetch: @escaping @Sendable () async -> QuotaAccount? = { await ClaudeAccountRateLimitProvider().identity() },
         claudeRateLimitFetch: @escaping @Sendable (Date) async -> ClaudeAccountRateLimitResult = {
             await ClaudeAccountRateLimitProvider().fetch(observedAt: $0)
         }
@@ -44,6 +50,9 @@ actor UsageCoordinator {
         self.calculator = calculator
         self.claude = claudeAdapter
         self.claudeRateLimitFetch = claudeRateLimitFetch
+        self.claudeIdentityFetch = claudeIdentityFetch
+        self.codexIdentityFetch = codexIdentityFetch
+        self.codexRateLimitFetch = codexRateLimitFetch
         self.quotaHistoryImporter = CodexUsageLimitHistoryImporter(store: store)
     }
 
@@ -199,14 +208,16 @@ actor UsageCoordinator {
         let accountRateLimits = source == .codex
             ? await currentCodexAccountRateLimits(now: Date())
             : await currentClaudeAccountRateLimits(now: Date())
+        if let account = activeAccounts[source] { try await store.saveQuotaAccount(account) }
         if !accountRateLimits.isEmpty {
             try await store.upsertUsageLimits(accountRateLimits, now: Date())
         } else if let loggedUsageLimit {
             // Save the timestamp reported by Codex, never the refresh time.
             try await store.upsertUsageLimits([loggedUsageLimit], now: Date())
         }
+        // Session logs have no verified account identity. Retain them only in
+        // anonymous history; never present them as the current account's meter.
         let usageLimit = accountRateLimits.max { $0.windowMinutes < $1.windowMinutes }
-            ?? loggedUsageLimit
         let refreshedAt = Date()
         let usageLimitHistory = try await store.usageLimitHistory(
             source: source,
@@ -252,7 +263,9 @@ actor UsageCoordinator {
             pricingUpdatedAt: Self.parseCatalogDate(calculator.catalog.effectiveDate),
             usageLimit: usageLimit,
             usageLimitHistory: usageLimitHistory,
-            quotaTokenSummary: quotaTokenSummary
+            quotaTokenSummary: quotaTokenSummary,
+            quotaAccounts: try await store.quotaAccounts(source: source),
+            activeQuotaAccountID: activeAccounts[source]?.id
         )
         if files.isEmpty, usageLimit == nil {
             return daily.isEmpty && usageLimitHistory.isEmpty
@@ -357,50 +370,85 @@ actor UsageCoordinator {
         return min(current ?? candidate, candidate)
     }
 
-    private func currentCodexAccountRateLimits(now: Date) async -> [UsageLimitSnapshot] {
+    func currentCodexAccountRateLimits(now: Date) async -> [UsageLimitSnapshot] {
+        let identity = await codexIdentityFetch()
+        if identity?.id != activeAccounts[.codex]?.id || identity == nil {
+            cachedAccountRateLimits = []
+            accountRateLimitAttemptedAt = nil
+            accountRateLimitSucceededAt = nil
+        }
+        activeAccounts[.codex] = identity
+        guard let identity, identity.source == .codex else { return [] }
+        cachedAccountRateLimits = cachedAccountRateLimits.filter { $0.resetsAt.map { $0 > now } ?? true }
         if let attemptedAt = accountRateLimitAttemptedAt,
-           now.timeIntervalSince(attemptedAt) < Self.accountRateLimitRefreshInterval {
-            return cachedAccountRateLimits
-        }
+           now.timeIntervalSince(attemptedAt) < Self.accountRateLimitRefreshInterval { return cachedAccountRateLimits }
         accountRateLimitAttemptedAt = now
-        let fetched = await codexAccountRateLimits.fetch(observedAt: now)
-        if !fetched.isEmpty {
-            cachedAccountRateLimits = fetched
+        if let fetched = await codexRateLimitFetch(now), fetched.account.id == identity.id,
+           let after = await codexIdentityFetch(), after.id == identity.id {
+            activeAccounts[.codex] = after
+            cachedAccountRateLimits = fetched.snapshots.filter {
+                $0.source == .codex && $0.limitID == identity.limitID && ($0.resetsAt.map { $0 > now } ?? true)
+            }
             accountRateLimitSucceededAt = now
-            return fetched
+        } else {
+            // No verified result: discard rather than guessing whether a failed
+            // read was caused by an authentication change.
+            cachedAccountRateLimits = []
+            activeAccounts[.codex] = nil
+            accountRateLimitSucceededAt = nil
         }
-        if let succeededAt = accountRateLimitSucceededAt,
-           now.timeIntervalSince(succeededAt) <= Self.accountRateLimitStaleInterval {
-            return cachedAccountRateLimits
-        }
-        cachedAccountRateLimits = []
-        return []
+        return cachedAccountRateLimits
     }
 
     func currentClaudeAccountRateLimits(now: Date) async -> [UsageLimitSnapshot] {
+        let identity = await claudeIdentityFetch()
+        if identity?.id != activeAccounts[.claudeCode]?.id || identity == nil {
+            cachedClaudeRateLimits = []
+            claudeRateLimitAttemptedAt = nil
+            claudeRateLimitSucceededAt = nil
+        }
+        activeAccounts[.claudeCode] = identity
+        guard let identity, identity.source == .claudeCode else { return [] }
         cachedClaudeRateLimits = cachedClaudeRateLimits.filter { ($0.resetsAt ?? .distantPast) > now }
         if let attemptedAt = claudeRateLimitAttemptedAt,
-           now.timeIntervalSince(attemptedAt) < Self.accountRateLimitRefreshInterval {
-            return cachedClaudeRateLimits
-        }
+           now.timeIntervalSince(attemptedAt) < Self.accountRateLimitRefreshInterval { return cachedClaudeRateLimits }
         claudeRateLimitAttemptedAt = now
-        switch await claudeRateLimitFetch(now) {
-        case let .available(snapshots):
+        let result = await claudeRateLimitFetch(now)
+        guard let after = await claudeIdentityFetch(), after.id == identity.id else {
+            cachedClaudeRateLimits = []
+            activeAccounts[.claudeCode] = nil
+            claudeRateLimitSucceededAt = nil
+            return []
+        }
+        activeAccounts[.claudeCode] = after
+        switch result {
+        case let .identified(account, snapshots):
+            guard account.id == identity.id else {
+                cachedClaudeRateLimits = []
+                activeAccounts[.claudeCode] = nil
+                claudeRateLimitSucceededAt = nil
+                return []
+            }
             cachedClaudeRateLimits = snapshots.filter {
-                $0.source == .claudeCode && $0.limitID == "claude-code"
+                $0.source == .claudeCode && $0.limitID == account.limitID
                     && ($0.windowMinutes == 300 || $0.windowMinutes == 10_080)
                     && ($0.resetsAt ?? .distantPast) > now
             }
             claudeRateLimitSucceededAt = now
+        case let .available(snapshots):
+            // Compatibility for injected providers; production supplies identified.
+            cachedClaudeRateLimits = snapshots.filter {
+                $0.source == .claudeCode && $0.limitID == "claude-code"
+                    && ($0.windowMinutes == 300 || $0.windowMinutes == 10_080)
+                    && ($0.resetsAt ?? .distantPast) > now
+            }.map(identity.assigning)
+            claudeRateLimitSucceededAt = now
         case .unavailable:
-            // Do not show the previous account's quota after auth/plan changes.
             cachedClaudeRateLimits = []
             claudeRateLimitSucceededAt = nil
         case .failed:
             if let succeededAt = claudeRateLimitSucceededAt,
-               now.timeIntervalSince(succeededAt) <= Self.accountRateLimitStaleInterval {
-                return cachedClaudeRateLimits
-            }
+               now.timeIntervalSince(succeededAt) <= Self.accountRateLimitStaleInterval { return cachedClaudeRateLimits }
             cachedClaudeRateLimits = []
         }
         return cachedClaudeRateLimits

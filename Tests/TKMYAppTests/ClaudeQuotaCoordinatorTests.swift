@@ -27,6 +27,7 @@ private func quotaCoordinator(directory: URL, sequence: ClaudeQuotaSequence) thr
         store: SQLiteUsageStore(databaseURL: directory.appendingPathComponent("usage.sqlite3")),
         calculator: UsagePriceCalculator.bundled(),
         claudeAdapter: ClaudeCodeAdapter(environment: [:], homeDirectory: directory),
+        claudeIdentityFetch: { QuotaAccount(source: .claudeCode, email: "test@example.com") },
         claudeRateLimitFetch: { await sequence.fetch($0) }
     )
 }
@@ -54,8 +55,8 @@ private func quotaCoordinator(directory: URL, sequence: ClaudeQuotaSequence) thr
     let quota = claudeQuota(now, minutes: 10_080)
     let sequence = ClaudeQuotaSequence([.available([quota]), .unavailable])
     let coordinator = try quotaCoordinator(directory: directory, sequence: sequence)
-    #expect(await coordinator.currentClaudeAccountRateLimits(now: now) == [quota])
-    #expect(await coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(30)) == [quota])
+    #expect(await coordinator.currentClaudeAccountRateLimits(now: now) == [QuotaAccount(source: .claudeCode, email: "test@example.com").assigning(quota)])
+    #expect(await coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(30)) == [QuotaAccount(source: .claudeCode, email: "test@example.com").assigning(quota)])
     #expect(await sequence.calls == 1)
     #expect(await coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(61)) == [])
 }
@@ -67,8 +68,8 @@ private func quotaCoordinator(directory: URL, sequence: ClaudeQuotaSequence) thr
     let quota = claudeQuota(now, minutes: 10_080)
     let sequence = ClaudeQuotaSequence([.available([quota]), .failed, .failed])
     let coordinator = try quotaCoordinator(directory: directory, sequence: sequence)
-    #expect(await coordinator.currentClaudeAccountRateLimits(now: now) == [quota])
-    #expect(await coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(61)) == [quota])
+    #expect(await coordinator.currentClaudeAccountRateLimits(now: now) == [QuotaAccount(source: .claudeCode, email: "test@example.com").assigning(quota)])
+    #expect(await coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(61)) == [QuotaAccount(source: .claudeCode, email: "test@example.com").assigning(quota)])
     #expect(await coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(601)) == [])
 }
 

@@ -120,6 +120,10 @@ public enum L10n {
     ]
 
     private static let translations: [String: [String]] = [
+        "quota_account": ["Account", "アカウント", "Konto", "账户", "Compte", "계정", "Cuenta", "Account", "Tài khoản", "บัญชี"],
+        "quota_account_unknown": ["Unknown account (legacy history)", "アカウント不明（従来の履歴）", "Unbekanntes Konto (bisheriger Verlauf)", "未知账户（旧历史）", "Compte inconnu (ancien historique)", "알 수 없는 계정 (기존 기록)", "Cuenta desconocida (historial anterior)", "Account sconosciuto (cronologia precedente)", "Tài khoản không rõ (lịch sử cũ)", "ไม่ทราบบัญชี (ประวัติเดิม)"],
+        "quota_account_current": ["Current CLI account · last confirmed values", "現在のCLIアカウント · 最終確認値", "Aktuelles CLI-Konto · zuletzt bestätigte Werte", "当前 CLI 账户 · 最近确认值", "Compte CLI actuel · dernières valeurs confirmées", "현재 CLI 계정 · 마지막 확인값", "Cuenta CLI actual · últimos valores confirmados", "Account CLI attuale · ultimi valori confermati", "Tài khoản CLI hiện tại · giá trị xác nhận gần nhất", "บัญชี CLI ปัจจุบัน · ค่าที่ตรวจสอบล่าสุด"],
+        "quota_account_last_observed": ["Historical account · values at last observation", "過去のアカウント · 最終取得時点の値", "Früheres Konto · Werte der letzten Beobachtung", "历史账户 · 最后获取时的值", "Ancien compte · valeurs lors du dernier relevé", "이전 계정 · 마지막 수집 시점의 값", "Cuenta anterior · valores de la última lectura", "Account precedente · valori dell’ultima lettura", "Tài khoản trước · giá trị lần ghi nhận cuối", "บัญชีก่อนหน้า · ค่าเมื่อเก็บข้อมูลครั้งล่าสุด"],
         "general": ["General", "一般", "Allgemein", "通用", "Général", "일반", "General", "Generali", "Chung", "ทั่วไป"],
         "language": ["Language", "言語", "Sprache", "语言", "Langue", "언어", "Idioma", "Lingua", "Ngôn ngữ", "ภาษา"],
         "display_language": ["Display language", "表示言語", "Anzeigesprache", "显示语言", "Langue d’affichage", "표시 언어", "Idioma de visualización", "Lingua di visualizzazione", "Ngôn ngữ hiển thị", "ภาษาที่แสดง"],

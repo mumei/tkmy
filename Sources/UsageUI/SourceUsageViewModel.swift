@@ -20,6 +20,8 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
     public let usageLimit: UsageLimitSnapshot?
     public let usageLimitHistory: [UsageLimitSnapshot]
     public let quotaTokenSummary: QuotaTokenSummary?
+    public let quotaAccounts: [QuotaAccount]
+    public let activeQuotaAccountID: String?
 
     public init(
         source: UsageSource,
@@ -29,7 +31,9 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         pricingUpdatedAt: Date? = nil,
         usageLimit: UsageLimitSnapshot? = nil,
         usageLimitHistory: [UsageLimitSnapshot] = [],
-        quotaTokenSummary: QuotaTokenSummary? = nil
+        quotaTokenSummary: QuotaTokenSummary? = nil,
+        quotaAccounts: [QuotaAccount] = [],
+        activeQuotaAccountID: String? = nil
     ) {
         self.source = source
         self.dailyUsage = dailyUsage
@@ -39,6 +43,8 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         self.usageLimit = usageLimit
         self.usageLimitHistory = usageLimitHistory
         self.quotaTokenSummary = quotaTokenSummary
+        self.quotaAccounts = quotaAccounts
+        self.activeQuotaAccountID = activeQuotaAccountID
     }
 }
 
@@ -80,6 +86,9 @@ public final class SourceUsageViewModel: ObservableObject {
     // Display selections outlive refresh phases and recreation of the history view.
     @Published var selectedQuotaHistoryRange: UsageLimitHistoryRange = .sevenDays
     @Published var selectedQuotaHistoryBucketID: String?
+    @Published var selectedQuotaAccountID: String?
+    @Published public private(set) var quotaAccounts: [QuotaAccount] = []
+    @Published public private(set) var activeQuotaAccountID: String?
 
     private let calendar: Calendar
     private let loader: SourceUsageLoader?
@@ -126,6 +135,8 @@ public final class SourceUsageViewModel: ObservableObject {
             usageLimit = nil
             usageLimitHistory = []
             quotaTokenSummary = nil
+            quotaAccounts = []
+            activeQuotaAccountID = nil
             phase = .sourceMissing(searchedLocations: locations)
         case let .partialFailure(snapshot, unreadableFileCount):
             guard apply(snapshot: snapshot) else { return }
@@ -210,6 +221,9 @@ public final class SourceUsageViewModel: ObservableObject {
         usageLimitHistory = snapshot.usageLimitHistory
             .filter { $0.source == source }
             .sorted { $0.observedAt < $1.observedAt }
+        quotaAccounts = snapshot.quotaAccounts.filter { $0.source == source }
+        activeQuotaAccountID = snapshot.activeQuotaAccountID
+        if selectedQuotaAccountID == nil { selectedQuotaAccountID = activeQuotaAccountID ?? "anonymous" }
         quotaTokenSummary = snapshot.quotaTokenSummary.flatMap {
             $0.source == source ? $0 : nil
         }

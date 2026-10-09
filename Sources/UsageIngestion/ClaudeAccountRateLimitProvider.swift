@@ -4,6 +4,7 @@ import UsageDomain
 
 public enum ClaudeAccountRateLimitResult: Sendable, Equatable {
     case available([UsageLimitSnapshot])
+    case identified(QuotaAccount, [UsageLimitSnapshot])
     case unavailable
     case failed
 }
@@ -29,11 +30,49 @@ public struct ClaudeAccountRateLimitProvider: Sendable {
     public func fetch(observedAt: Date = Date()) async -> ClaudeAccountRateLimitResult {
         guard let executableURL else { return .unavailable }
         return await Task.detached(priority: .utility) {
-            Self.fetchSynchronously(
-                executableURL: executableURL, environment: environment,
-                timeout: timeout, observedAt: observedAt
-            )
+            guard let before = Self.readIdentity(executableURL: executableURL, environment: environment, timeout: timeout) else { return .unavailable }
+            let result = Self.fetchSynchronously(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt)
+            guard let after = Self.readIdentity(executableURL: executableURL, environment: environment, timeout: timeout), before.id == after.id else { return .unavailable }
+            if case let .available(samples) = result { return .identified(after, samples.map(after.assigning)) }
+            return result
         }.value
+    }
+
+    public func identity() async -> QuotaAccount? {
+        guard let executableURL else { return nil }
+        return await Task.detached(priority: .utility) {
+            Self.readIdentity(executableURL: executableURL, environment: environment, timeout: timeout)
+        }.value
+    }
+
+    static func account(from data: Data) -> QuotaAccount? {
+        guard let value = IngestionSupport.jsonObject(data),
+              let loggedIn = value["loggedIn"] as? NSNumber,
+              CFGetTypeID(loggedIn) == CFBooleanGetTypeID(), loggedIn.boolValue,
+              value["authMethod"] as? String == "claude.ai",
+              let email = value["email"] as? String, !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        if let provider = value["apiProvider"], provider as? String != "firstParty" { return nil }
+        if let orgID = value["orgId"] as? String, nonempty(orgID) == nil { return nil }
+        // Missing/null organization fields are valid for personal subscriptions.
+        // Wrong types must never collapse an organization into a personal account.
+        for key in ["orgId", "orgName", "subscriptionType"] {
+            if let field = value[key], !(field is NSNull), !(field is String) { return nil }
+        }
+        return QuotaAccount(source: .claudeCode, email: email,
+                            organizationID: nonempty(value["orgId"] as? String),
+                            organizationName: nonempty(value["orgName"] as? String),
+                            subscriptionType: nonempty(value["subscriptionType"] as? String))
+    }
+
+    private static func nonempty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+
+    private static func readIdentity(executableURL: URL, environment: [String: String], timeout: TimeInterval) -> QuotaAccount? {
+        guard let data = ReadOnlyCommand.capture(executableURL: executableURL, arguments: ["auth", "status"], environment: environment, timeout: timeout) else { return nil }
+        return account(from: data)
     }
 
     static func result(from responseData: Data, observedAt: Date) -> ClaudeAccountRateLimitResult {

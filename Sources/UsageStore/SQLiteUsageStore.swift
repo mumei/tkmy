@@ -330,11 +330,37 @@ public actor SQLiteUsageStore: UsageEventStore {
         }
     }
 
+    public func saveQuotaAccount(_ account: QuotaAccount) throws {
+        let metadata = String(decoding: try JSONEncoder().encode(account), as: UTF8.self)
+        let statement = try prepare("INSERT INTO quota_accounts(id, metadata) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET metadata = excluded.metadata WHERE metadata != excluded.metadata")
+        defer { sqlite3_finalize(statement) }
+        bind(account.id, at: 1, to: statement)
+        bind(metadata, at: 2, to: statement)
+        try stepDone(statement)
+    }
+
+    public func quotaAccounts(source: UsageSource) throws -> [QuotaAccount] {
+        let statement = try prepare("SELECT metadata FROM quota_accounts ORDER BY id")
+        defer { sqlite3_finalize(statement) }
+        var accounts: [QuotaAccount] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { break }
+            guard result == SQLITE_ROW else { throw UsageStoreError.sqlite("could not read quota accounts") }
+            guard let value = text(statement, 0),
+                  let account = try? JSONDecoder().decode(QuotaAccount.self, from: Data(value.utf8)),
+                  account.source == source else { continue }
+            accounts.append(account)
+        }
+        return accounts.sorted { $0.displayName < $1.displayName }
+    }
+
     public func deleteHistory() async throws {
         try execute("BEGIN IMMEDIATE")
         do {
             try execute("DELETE FROM usage_events")
             try execute("DELETE FROM source_cursors")
+            try execute("DELETE FROM quota_accounts")
             try execute("DELETE FROM usage_limit_samples")
             try execute("DELETE FROM usage_limit_evidence_pages")
             try execute("COMMIT")
@@ -389,7 +415,7 @@ public actor SQLiteUsageStore: UsageEventStore {
         try execute("PRAGMA foreign_keys = ON", database: database)
         try execute("PRAGMA busy_timeout = 3000", database: database)
         let version = try integerQuery("PRAGMA user_version", database: database)
-        guard version <= 4 else {
+        guard version <= 5 else {
             throw UsageStoreError.sqlite("unsupported database schema version \(version)")
         }
         try execute("""
@@ -433,7 +459,8 @@ public actor SQLiteUsageStore: UsageEventStore {
         } else {
             try createUsageLimitSchema(database: database)
         }
-        try execute("PRAGMA user_version = 4", database: database)
+        try execute("CREATE TABLE IF NOT EXISTS quota_accounts(id TEXT PRIMARY KEY, metadata TEXT NOT NULL)", database: database)
+        try execute("PRAGMA user_version = 5", database: database)
     }
 
     private static func createUsageLimitSchema(database: OpaquePointer?, tableSuffix: String = "") throws {
