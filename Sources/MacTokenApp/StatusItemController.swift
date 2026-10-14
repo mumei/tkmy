@@ -7,7 +7,7 @@ import UsageUI
 
 @MainActor
 final class StatusItemController: NSObject {
-    private let statusItem: NSStatusItem
+    let statusItem: NSStatusItem
     private let detailPanel: AnchoredDetailPanel
     private let viewModel: SourceUsageViewModel
     private let updateController: UpdateController
@@ -209,7 +209,7 @@ final class StatusItemController: NSObject {
             statusItem.button?.toolTip = detail
             statusItem.button?.setAccessibilityLabel("\(shortName)、\(detail)")
         } else {
-            applyMeterStyle(remainingPercent: 0, label: "—")
+            applyMeterStyle(remainingPercent: nil, label: "—")
             let tokenDetail = total.map {
                 "・" + L10n.text("today_tokens", $0.formatted(.number.locale(L10n.locale)))
             } ?? ""
@@ -221,7 +221,7 @@ final class StatusItemController: NSObject {
         statusItemsDidChange()
     }
 
-    private func applyMeterStyle(remainingPercent: Double, label: String) {
+    private func applyMeterStyle(remainingPercent: Double?, label: String) {
         guard let button = statusItem.button else { return }
         let image = MenuMeterRenderer.image(
             style: settings.menuMeterStyle,

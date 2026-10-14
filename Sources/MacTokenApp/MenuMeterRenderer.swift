@@ -37,8 +37,22 @@ enum MenuMeterStyle: String, CaseIterable, Identifiable {
 }
 
 enum MenuMeterRenderer {
-    static func image(style: MenuMeterStyle, percentage: Double, source: UsageSource) -> NSImage? {
+    static func image(style: MenuMeterStyle, percentage: Double?, source: UsageSource) -> NSImage? {
         guard style != .percentageOnly else { return nil }
+        guard let percentage else {
+            // Unknown is distinct from a confirmed exhausted allowance.
+            let image = NSImage(size: NSSize(width: 30, height: 12), flipped: false) { rect in
+                let mark = NSAttributedString(string: "?", attributes: [
+                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: NSColor.labelColor,
+                ])
+                let size = mark.size()
+                mark.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+                return true
+            }
+            image.isTemplate = true
+            return image
+        }
         let progress = min(1, max(0, percentage / 100))
         let size = NSSize(width: 30, height: 12)
         let image = NSImage(size: size, flipped: false) { rect in
