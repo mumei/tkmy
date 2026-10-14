@@ -3,20 +3,32 @@ import Foundation
 import UsageDomain
 
 /// Reads the account-wide Codex quota through the public app-server protocol.
-/// Local session logs remain the fallback because older Codex versions may not
-/// provide this method or the executable may not be installed.
+/// Local session logs remain anonymous history; only a verified account's
+/// quota can supply the current meter.
 public struct CodexAccountRateLimitProvider: Sendable {
     private let executableURL: URL?
+    private let argumentsPrefix: [String]
     private let environment: [String: String]
     private let timeout: TimeInterval
 
     public init(
         executableURL: URL? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        timeout: TimeInterval = 8
+        timeout: TimeInterval = 8,
+        nodeExecutableURL: URL? = nil
     ) {
         self.environment = environment
-        self.executableURL = executableURL ?? Self.findExecutable(environment: environment)
+        let codexURL = executableURL ?? Self.findExecutable(environment: environment)
+        if let codexURL, Self.isNodeLauncher(codexURL) {
+            // Finder/login-item launches don't inherit the shell's Node PATH.
+            // Execute the installed CLI through an explicit interpreter instead
+            // of relying on its /usr/bin/env node shebang.
+            self.executableURL = nodeExecutableURL ?? Self.findNodeExecutable(environment: environment)
+            self.argumentsPrefix = [codexURL.path]
+        } else {
+            self.executableURL = codexURL
+            self.argumentsPrefix = []
+        }
         self.timeout = max(1, timeout)
     }
 
@@ -25,6 +37,7 @@ public struct CodexAccountRateLimitProvider: Sendable {
         return await Task.detached(priority: .utility) {
             Self.fetchSynchronously(
                 executableURL: executableURL,
+                argumentsPrefix: argumentsPrefix,
                 environment: environment,
                 timeout: timeout,
                 observedAt: observedAt
@@ -53,15 +66,15 @@ public struct CodexAccountRateLimitProvider: Sendable {
     public func identity() async -> QuotaAccount? {
         guard let executableURL else { return nil }
         return await Task.detached(priority: .utility) {
-            Self.readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: Date(), identityOnly: true)?.0
+            Self.readSession(executableURL: executableURL, argumentsPrefix: argumentsPrefix, environment: environment, timeout: timeout, observedAt: Date(), identityOnly: true)?.0
         }.value
     }
 
     public func fetchIdentified(observedAt: Date = Date()) async -> (account: QuotaAccount, snapshots: [UsageLimitSnapshot])? {
         guard let executableURL else { return nil }
         return await Task.detached(priority: .utility) {
-            guard let result = Self.readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: false),
-                  let after = Self.readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: true)?.0,
+            guard let result = Self.readSession(executableURL: executableURL, argumentsPrefix: argumentsPrefix, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: false),
+                  let after = Self.readSession(executableURL: executableURL, argumentsPrefix: argumentsPrefix, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: true)?.0,
                   result.0.id == after.id else { return nil }
             return (account: after, snapshots: result.1.map(after.assigning))
         }.value
@@ -80,17 +93,17 @@ public struct CodexAccountRateLimitProvider: Sendable {
         return QuotaAccount(source: .codex, email: email, subscriptionType: account["planType"] as? String)
     }
 
-    private static func fetchSynchronously(executableURL: URL, environment: [String: String], timeout: TimeInterval, observedAt: Date) -> [UsageLimitSnapshot] {
-        readSession(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: false)?.1 ?? []
+    private static func fetchSynchronously(executableURL: URL, argumentsPrefix: [String], environment: [String: String], timeout: TimeInterval, observedAt: Date) -> [UsageLimitSnapshot] {
+        readSession(executableURL: executableURL, argumentsPrefix: argumentsPrefix, environment: environment, timeout: timeout, observedAt: observedAt, identityOnly: false)?.1 ?? []
     }
 
-    private static func readSession(executableURL: URL, environment: [String: String], timeout: TimeInterval, observedAt: Date, identityOnly: Bool) -> (QuotaAccount, [UsageLimitSnapshot])? {
+    private static func readSession(executableURL: URL, argumentsPrefix: [String], environment: [String: String], timeout: TimeInterval, observedAt: Date, identityOnly: Bool) -> (QuotaAccount, [UsageLimitSnapshot])? {
         let process = Process()
         let input = Pipe()
         let output = Pipe()
         let collector = CodexRateLimitOutputCollector()
         process.executableURL = executableURL
-        process.arguments = ["app-server", "--disable", "plugins", "--disable", "apps", "--stdio"]
+        process.arguments = argumentsPrefix + ["app-server", "--disable", "plugins", "--disable", "apps", "--stdio"]
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -184,6 +197,21 @@ public struct CodexAccountRateLimitProvider: Sendable {
               Int64(exactly: (date.timeIntervalSince1970 * 1_000).rounded()) != nil
         else { return nil }
         return date
+    }
+
+    private static func isNodeLauncher(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 128),
+              let header = String(data: data, encoding: .utf8)?.components(separatedBy: .newlines).first
+        else { return false }
+        return header.trimmingCharacters(in: .whitespaces) == "#!/usr/bin/env node"
+    }
+
+    private static func findNodeExecutable(environment: [String: String]) -> URL? {
+        let paths = (environment["PATH"] ?? "").split(separator: ":").map { "\($0)/node" }
+            + ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
+        return paths.first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
     }
 
     private static func findExecutable(environment: [String: String]) -> URL? {

@@ -101,7 +101,9 @@ private func claudeWindow(_ used: Any, reset: Any? = nil) -> [String: Any] {
     #expect(account.email == "test@example.com")
     #expect(snapshots.first?.limitID == account.limitID)
     #expect(snapshots.first?.remainingPercent == 59)
-    #expect(Date().timeIntervalSince(start) < 2)
+    // Leave room for scheduling and helper shutdown under concurrent test load,
+    // but still fail if the provider waits for the server's 10-second lifetime.
+    #expect(Date().timeIntervalSince(start) < 5)
 }
 
 @Test func claudeQuotaProcessTimesOutWithoutHanging() async throws {

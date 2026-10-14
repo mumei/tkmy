@@ -104,7 +104,9 @@ import UsageDomain
     let startedAt = Date()
     let snapshots = await provider.fetch(observedAt: Date(timeIntervalSince1970: 1_800_000_000))
 
-    #expect(Date().timeIntervalSince(startedAt) < 2)
+    // Allow scheduling and helper shutdown under concurrent test load, while
+    // still detecting a wait for the fake server's 30-second lifetime.
+    #expect(Date().timeIntervalSince(startedAt) < 5)
     #expect(snapshots.count == 1)
     #expect(snapshots.first?.usedPercent == 49)
 }
