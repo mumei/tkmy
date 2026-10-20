@@ -341,7 +341,7 @@ struct UsageLimitHistoryView: View {
                                 Text(timestamp(observation.observedAt))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
-                                Text(durationText(observation.windowMinutes) + " · " + elapsedSincePrevious(at: index, in: tableObservations))
+                                Text((observation.isFableQuota ? "Fable · " : "") + durationText(observation.windowMinutes) + " · " + elapsedSincePrevious(at: index, in: tableObservations))
                                     .foregroundStyle(UsageLimitHistoryChart.color(for: UsageLimitHistoryBucket(observation)))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
@@ -415,6 +415,7 @@ struct UsageLimitHistoryView: View {
     }
 
     private func readableLimitID(_ limitID: String) -> String {
+        if limitID == "claude-code-fable" || limitID.hasPrefix("claude-code-fable@") { return "Fable" }
         if limitID.lowercased() == "codex_bengalfox" { return "GPT-5.3-Codex-Spark" }
         return limitID
             .replacingOccurrences(of: "_", with: " ")

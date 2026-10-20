@@ -27,6 +27,40 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    enum QuotaWindow: String, CaseIterable, Identifiable {
+        case weekly, shortTerm, fable
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .weekly: L10n.text("quota_menu_weekly")
+            case .shortTerm: L10n.text("quota_menu_short")
+            case .fable: L10n.text("quota_menu_fable")
+            }
+        }
+
+        func selectedLimit(in samples: [UsageLimitSnapshot], source: UsageSource, now: Date = Date()) -> UsageLimitSnapshot? {
+            samples.filter {
+                $0.source == source && ($0.resetsAt.map { $0 > now } ?? true)
+                    && (self == .fable ? $0.isFableQuota : !$0.isFableQuota)
+                    && (self == .shortTerm ? (1..<10_080).contains($0.windowMinutes) : $0.windowMinutes == 10_080)
+            }.sorted {
+                if $0.windowMinutes != $1.windowMinutes { return $0.windowMinutes < $1.windowMinutes }
+                return $0.observedAt > $1.observedAt
+            }.first
+        }
+    }
+
+    @Published var codexQuotaWindow: QuotaWindow {
+        didSet { defaults.set(codexQuotaWindow.rawValue, forKey: "codexQuotaWindow") }
+    }
+    @Published var claudeQuotaWindow: QuotaWindow {
+        didSet { defaults.set(claudeQuotaWindow.rawValue, forKey: "claudeQuotaWindow") }
+    }
+
+    func quotaWindow(for source: UsageSource) -> QuotaWindow {
+        source == .codex ? codexQuotaWindow : claudeQuotaWindow
+    }
+
     private enum Key {
         static let opensDetailsOnHover = "opensDetailsOnHover"
         static let showsCodexMenu = "showsCodexMenu"
@@ -80,6 +114,8 @@ final class AppSettings: ObservableObject {
     init(defaults: UserDefaults = .standard, loginService: any LaunchAtLoginService = SMAppService.mainApp) {
         self.defaults = defaults
         self.loginService = loginService
+        codexQuotaWindow = defaults.string(forKey: "codexQuotaWindow").flatMap(QuotaWindow.init(rawValue:)).flatMap { $0 == .fable ? nil : $0 } ?? .weekly
+        claudeQuotaWindow = defaults.string(forKey: "claudeQuotaWindow").flatMap(QuotaWindow.init(rawValue:)) ?? .weekly
         launchAtLogin = loginService.status == .enabled
         launchAtLoginError = nil
         opensDetailsOnHover = defaults.object(forKey: Key.opensDetailsOnHover) as? Bool ?? true

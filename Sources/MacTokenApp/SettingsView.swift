@@ -53,6 +53,19 @@ struct SettingsView: View {
                 Toggle(L10n.text("show_codex"), isOn: menuVisibilityBinding(for: .codex))
                 Toggle(L10n.text("show_claude"), isOn: menuVisibilityBinding(for: .claudeCode))
 
+                Picker(L10n.text("codex_quota_window"), selection: $settings.codexQuotaWindow) {
+                    ForEach([AppSettings.QuotaWindow.weekly, .shortTerm]) { value in
+                        Text(value.displayName).tag(value)
+                    }
+                }
+                Picker(L10n.text("claude_quota_window"), selection: $settings.claudeQuotaWindow) {
+                    ForEach(AppSettings.QuotaWindow.allCases) { value in
+                        Text(value.displayName).tag(value)
+                    }
+                }
+                Text(L10n.text("quota_window_unavailable_hint"))
+                    .font(.caption).foregroundStyle(.secondary)
+
                 Picker(L10n.text("meter_style"), selection: $settings.menuMeterStyle) {
                     ForEach(MenuMeterStyle.allCases) { style in
                         Text(style.displayName).tag(style)

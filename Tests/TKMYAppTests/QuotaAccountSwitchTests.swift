@@ -32,7 +32,7 @@ func accountSwitchInsideThrottleNeverReturnsPreviousQuota(source: UsageSource) a
         claudeIdentityFetch: { await box.get() },
         claudeRateLimitFetch: { now in
             guard let account = await box.get() else { return .unavailable }
-            return .identified(account, [sample(account, now: now)])
+            return .identified(account, [sample(account, now: now), account.assigning(UsageLimitSnapshot(source: .claudeCode, limitID: "claude-code-fable", usedPercent: 71, windowMinutes: 10_080, resetsAt: now.addingTimeInterval(7200), observedAt: now))])
         }
     )
     let now = Date()
@@ -41,6 +41,8 @@ func accountSwitchInsideThrottleNeverReturnsPreviousQuota(source: UsageSource) a
     await box.set(second)
     let b = await (source == .codex ? coordinator.currentCodexAccountRateLimits(now: now.addingTimeInterval(10)) : coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(10)))
     #expect(b.first?.quotaAccountID == second.id)
+    #expect(b.allSatisfy { $0.quotaAccountID == second.id })
+    if source == .claudeCode { #expect(b.first(where: { $0.isFableQuota })?.remainingPercent == 29) }
     await box.set(nil)
     let signedOut = await (source == .codex ? coordinator.currentCodexAccountRateLimits(now: now.addingTimeInterval(20)) : coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(20)))
     #expect(signedOut.isEmpty)

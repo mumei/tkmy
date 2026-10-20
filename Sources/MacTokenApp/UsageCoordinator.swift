@@ -217,7 +217,7 @@ actor UsageCoordinator {
         }
         // Session logs have no verified account identity. Retain them only in
         // anonymous history; never present them as the current account's meter.
-        let usageLimit = accountRateLimits.max { $0.windowMinutes < $1.windowMinutes }
+        let usageLimit = accountRateLimits.filter { !$0.isFableQuota }.max { $0.windowMinutes < $1.windowMinutes }
         let refreshedAt = Date()
         let usageLimitHistory = try await store.usageLimitHistory(
             source: source,
@@ -262,6 +262,7 @@ actor UsageCoordinator {
             refreshedAt: refreshedAt,
             pricingUpdatedAt: Self.parseCatalogDate(calculator.catalog.effectiveDate),
             usageLimit: usageLimit,
+            currentUsageLimits: accountRateLimits,
             usageLimitHistory: usageLimitHistory,
             quotaTokenSummary: quotaTokenSummary,
             quotaAccounts: try await store.quotaAccounts(source: source),
@@ -430,7 +431,7 @@ actor UsageCoordinator {
                 return []
             }
             cachedClaudeRateLimits = snapshots.filter {
-                $0.source == .claudeCode && $0.limitID == account.limitID
+                $0.source == .claudeCode && ($0.limitID == account.limitID || ($0.isFableQuota && $0.quotaAccountID == account.id))
                     && ($0.windowMinutes == 300 || $0.windowMinutes == 10_080)
                     && ($0.resetsAt ?? .distantPast) > now
             }
@@ -438,7 +439,7 @@ actor UsageCoordinator {
         case let .available(snapshots):
             // Compatibility for injected providers; production supplies identified.
             cachedClaudeRateLimits = snapshots.filter {
-                $0.source == .claudeCode && $0.limitID == "claude-code"
+                $0.source == .claudeCode && ($0.limitID == "claude-code" || $0.limitID == "claude-code-fable")
                     && ($0.windowMinutes == 300 || $0.windowMinutes == 10_080)
                     && ($0.resetsAt ?? .distantPast) > now
             }.map(identity.assigning)

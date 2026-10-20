@@ -140,3 +140,42 @@ private func claudeWindow(_ used: Any, reset: Any? = nil) -> [String: Any] {
     #expect(!ClaudeAccountRateLimitProvider.supportsUsageRequest("unknown"))
     #expect(!ClaudeAccountRateLimitProvider.supportsUsageRequest("2.1.invalid.289"))
 }
+
+@Test func claudeFableUsesOfficialModelScopedContractAndStaysDistinct() throws {
+    var fable = claudeWindow(36)
+    fable["display_name"] = "Fable"
+    var opus = claudeWindow(90)
+    opus["display_name"] = "Opus"
+    let response = try claudeQuotaResponse(["rate_limits_available": true, "rate_limits": [
+        "seven_day": claudeWindow(12), "model_scoped": [fable, opus]
+    ]])
+    guard case let .available(samples) = ClaudeAccountRateLimitProvider.result(from: response, observedAt: claudeQuotaNow) else {
+        Issue.record("Expected scoped quota"); return
+    }
+    #expect(samples.count == 2)
+    let account = QuotaAccount(source: .claudeCode, email: "synthetic@example.com", organizationID: "org-a")
+    let fableSample = samples.first { $0.isFableQuota }
+    let scoped = account.assigning(try #require(fableSample))
+    #expect(scoped.remainingPercent == 64)
+    #expect(scoped.quotaAccountID == account.id)
+    #expect(scoped.limitID != account.limitID)
+}
+
+@Test func claudeFableMalformedMissingAndDuplicateRowsStayUnknown() throws {
+    var valid = claudeWindow(0)
+    valid["display_name"] = "Fable"
+    var invalid = valid
+    invalid["utilization"] = true
+    var expired = valid
+    expired["resets_at"] = ISO8601DateFormatter().string(from: claudeQuotaNow)
+    for rows in [[], [invalid], [expired], [valid, valid]] {
+        let response = try claudeQuotaResponse(["rate_limits_available": true, "rate_limits": [
+            "seven_day": claudeWindow(15), "model_scoped": rows
+        ]])
+        guard case let .available(samples) = ClaudeAccountRateLimitProvider.result(from: response, observedAt: claudeQuotaNow) else {
+            Issue.record("General quota must survive an invalid model row"); continue
+        }
+        #expect(samples.count == 1)
+        #expect(!samples[0].isFableQuota)
+    }
+}

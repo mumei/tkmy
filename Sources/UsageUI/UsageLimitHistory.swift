@@ -198,8 +198,8 @@ enum UsageLimitHistoryTimeline {
     }
 
     static func preferredBucket(in buckets: [UsageLimitHistoryBucket]) -> UsageLimitHistoryBucket? {
-        // The menu meters report each provider's general (usually weekly) limit.
-        // Prefer that familiar window before exposing more specific model limits.
+        // Keep the history's default summary on the general weekly window,
+        // independently of the user's menu-bar selection.
         buckets
             .filter(\.isGeneral)
             .max { $0.windowMinutes < $1.windowMinutes }

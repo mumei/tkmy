@@ -89,7 +89,7 @@ public struct ClaudeAccountRateLimitProvider: Sendable {
         guard let limits = response["rate_limits"] as? [String: Any] else { return .failed }
         // Model-specific buckets and extra spend are not the general allowance.
         let windows: [(String, Int)] = [("five_hour", 300), ("seven_day", 10_080)]
-        let snapshots = windows.compactMap { key, minutes -> UsageLimitSnapshot? in
+        var snapshots = windows.compactMap { key, minutes -> UsageLimitSnapshot? in
             guard let window = limits[key] as? [String: Any],
                   let number = window["utilization"] as? NSNumber,
                   CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -104,6 +104,26 @@ public struct ClaudeAccountRateLimitProvider: Sendable {
                 usedPercent: number.doubleValue, windowMinutes: minutes,
                 resetsAt: reset, observedAt: observedAt
             )
+        }
+        // Official SDK 0.3.303 exposes model_scoped, not a seven_day_fable key.
+        // Only the explicitly labelled Fable bucket is selected; never infer it
+        // from an Opus/Sonnet bucket or a generic weekly percentage.
+        if let rows = limits["model_scoped"] as? [[String: Any]] {
+            let fable = rows.filter { $0["display_name"] as? String == "Fable" }
+            // Conflicting duplicate rows are ambiguous: fail closed for this meter.
+            if fable.count == 1, let row = fable.first,
+               let number = row["utilization"] as? NSNumber,
+               CFGetTypeID(number) != CFBooleanGetTypeID(),
+               number.doubleValue.isFinite, (0...100).contains(number.doubleValue),
+               let text = row["resets_at"] as? String,
+               let reset = IngestionSupport.date(text), reset > observedAt,
+               Int64(exactly: (reset.timeIntervalSince1970 * 1_000).rounded()) != nil {
+                snapshots.append(UsageLimitSnapshot(
+                    source: .claudeCode, limitID: "claude-code-fable",
+                    usedPercent: number.doubleValue, windowMinutes: 10_080,
+                    resetsAt: reset, observedAt: observedAt
+                ))
+            }
         }
         return snapshots.isEmpty ? .failed : .available(snapshots)
     }

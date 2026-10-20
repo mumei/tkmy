@@ -83,3 +83,22 @@ private func quotaCoordinator(directory: URL, sequence: ClaudeQuotaSequence) thr
     #expect(await coordinator.currentClaudeAccountRateLimits(now: now.addingTimeInterval(11)) == [])
     #expect(await sequence.calls == 1)
 }
+
+@Test func claudeFableSurvivesCoordinatorAndDoesNotReplaceGeneralWeekly() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let now = Date()
+    let fable = UsageLimitSnapshot(source: .claudeCode, limitID: "claude-code-fable", usedPercent: 73,
+                                   windowMinutes: 10_080, resetsAt: now.addingTimeInterval(7200), observedAt: now)
+    let sequence = ClaudeQuotaSequence([.available([fable, claudeQuota(now, minutes: 300), claudeQuota(now, minutes: 10_080)])])
+    let coordinator = try quotaCoordinator(directory: directory, sequence: sequence)
+    guard case let .ready(snapshot) = try await coordinator.load(.claudeCode) else {
+        Issue.record("Expected quota"); return
+    }
+    #expect(snapshot.currentUsageLimits.count == 3)
+    #expect(snapshot.currentUsageLimits.first(where: \.isFableQuota)?.remainingPercent == 27)
+    #expect(snapshot.usageLimit?.remainingPercent == 58)
+    #expect(snapshot.usageLimit?.isFableQuota == false)
+    #expect(snapshot.usageLimitHistory.count == 3)
+    #expect(Set(snapshot.currentUsageLimits.compactMap(\.quotaAccountID)).count == 1)
+}

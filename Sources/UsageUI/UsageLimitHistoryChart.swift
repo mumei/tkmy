@@ -115,7 +115,8 @@ struct UsageLimitHistoryChart: View {
     }
 
     static func color(for bucket: UsageLimitHistoryBucket) -> Color {
-        switch bucket.windowMinutes {
+        if bucket.limitID.hasPrefix("claude-code-fable") { return .purple }
+        return switch bucket.windowMinutes {
         case 300: .blue
         case 10_080: .orange
         default: .purple
