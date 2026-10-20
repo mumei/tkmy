@@ -17,6 +17,7 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
     public let dailyModelUsage: [DailyModelUsage]
     public let refreshedAt: Date
     public let pricingUpdatedAt: Date?
+    public let currentUsageLimits: [UsageLimitSnapshot]
     public let usageLimit: UsageLimitSnapshot?
     public let usageLimitHistory: [UsageLimitSnapshot]
     public let quotaTokenSummary: QuotaTokenSummary?
@@ -30,6 +31,7 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         refreshedAt: Date = Date(),
         pricingUpdatedAt: Date? = nil,
         usageLimit: UsageLimitSnapshot? = nil,
+        currentUsageLimits: [UsageLimitSnapshot]? = nil,
         usageLimitHistory: [UsageLimitSnapshot] = [],
         quotaTokenSummary: QuotaTokenSummary? = nil,
         quotaAccounts: [QuotaAccount] = [],
@@ -40,6 +42,7 @@ public struct SourceUsageSnapshot: Equatable, Sendable {
         self.dailyModelUsage = dailyModelUsage
         self.refreshedAt = refreshedAt
         self.pricingUpdatedAt = pricingUpdatedAt
+        self.currentUsageLimits = currentUsageLimits ?? usageLimit.map { [$0] } ?? []
         self.usageLimit = usageLimit
         self.usageLimitHistory = usageLimitHistory
         self.quotaTokenSummary = quotaTokenSummary
@@ -80,6 +83,7 @@ public final class SourceUsageViewModel: ObservableObject {
     @Published public var selectedDay: Date?
     @Published public private(set) var lastSuccessfulUpdate: Date?
     @Published public private(set) var pricingUpdatedAt: Date?
+    @Published public private(set) var currentUsageLimits: [UsageLimitSnapshot] = []
     @Published public private(set) var usageLimit: UsageLimitSnapshot?
     @Published public private(set) var usageLimitHistory: [UsageLimitSnapshot]
     @Published public private(set) var quotaTokenSummary: QuotaTokenSummary?
@@ -132,6 +136,7 @@ public final class SourceUsageViewModel: ObservableObject {
             dailyUsage = []
             dailyModelUsage = []
             selectedDay = nil
+            currentUsageLimits = []
             usageLimit = nil
             usageLimitHistory = []
             quotaTokenSummary = nil
@@ -158,6 +163,8 @@ public final class SourceUsageViewModel: ObservableObject {
     }
 
     public func setUnavailable(reason: String? = nil) {
+        currentUsageLimits = []
+        usageLimit = nil
         phase = .unavailable(reason: reason)
     }
 
@@ -217,6 +224,7 @@ public final class SourceUsageViewModel: ObservableObject {
             .sorted { $0.day < $1.day }
         lastSuccessfulUpdate = snapshot.refreshedAt
         pricingUpdatedAt = snapshot.pricingUpdatedAt
+        currentUsageLimits = snapshot.currentUsageLimits.filter { $0.source == source }
         usageLimit = snapshot.usageLimit
         usageLimitHistory = snapshot.usageLimitHistory
             .filter { $0.source == source }

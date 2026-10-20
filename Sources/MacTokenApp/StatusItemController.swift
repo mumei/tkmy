@@ -16,6 +16,7 @@ final class StatusItemController: NSObject {
     private let statusItemsDidChange: () -> Void
     private let closeOtherPopovers: (StatusItemController) -> Void
     private var hoverTimer: Timer?
+    private var quotaResetTimer: Timer?
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
     private var cancellables: Set<AnyCancellable> = []
@@ -68,7 +69,7 @@ final class StatusItemController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateTitle() }
             .store(in: &cancellables)
-        viewModel.$usageLimit
+        viewModel.$currentUsageLimits
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateTitle() }
             .store(in: &cancellables)
@@ -84,6 +85,14 @@ final class StatusItemController: NSObject {
                 self.statusItem.isVisible = isVisible
                 self.statusItemsDidChange()
             }
+            .store(in: &cancellables)
+        settings.$codexQuotaWindow
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateTitle() }
+            .store(in: &cancellables)
+        settings.$claudeQuotaWindow
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateTitle() }
             .store(in: &cancellables)
         settings.$menuMeterStyle
             .receive(on: RunLoop.main)
@@ -109,6 +118,8 @@ final class StatusItemController: NSObject {
     }
 
     func close() {
+        quotaResetTimer?.invalidate()
+        quotaResetTimer = nil
         hoverTimer?.invalidate()
         detailPanel.orderOut(nil)
         removeClickMonitors()
@@ -190,16 +201,38 @@ final class StatusItemController: NSObject {
     }
 
     private func updateTitle() {
+        quotaResetTimer?.invalidate()
+        quotaResetTimer = nil
         let total = viewModel.todayUsage?.tokens.total
-        if let limit = viewModel.usageLimit {
+        let selection = settings.quotaWindow(for: viewModel.source)
+        if let limit = selection.selectedLimit(in: viewModel.currentUsageLimits, source: viewModel.source) {
             let remaining = Self.percentageText(limit.remainingPercent)
             let used = Self.percentageText(limit.usedPercent)
             applyMeterStyle(remainingPercent: limit.remainingPercent, label: remaining)
 
-            let windowLabel = limit.windowMinutes == 300 ? "five_hour_remaining" : "weekly_remaining"
-            var details = [L10n.text(windowLabel, remaining), L10n.text("used_format", used)]
+            let windowLabel: String
+            if limit.isFableQuota {
+                windowLabel = L10n.text("quota_fable_remaining", remaining)
+            } else if limit.windowMinutes == 300 {
+                windowLabel = L10n.text("five_hour_remaining", remaining)
+            } else if limit.windowMinutes == 10_080 {
+                windowLabel = L10n.text("weekly_remaining", remaining)
+            } else {
+                let formatter = DateComponentsFormatter()
+                var calendar = Calendar.current
+                calendar.locale = L10n.locale
+                formatter.calendar = calendar
+                formatter.allowedUnits = [.hour, .minute]
+                formatter.unitsStyle = .short
+                let duration = formatter.string(from: Double(limit.windowMinutes) * 60) ?? "\(limit.windowMinutes) min"
+                windowLabel = selection.displayName + " (" + duration + ") · " + L10n.text("remaining_format", remaining)
+            }
+            var details = [windowLabel, L10n.text("used_format", used)]
             if let resetsAt = limit.resetsAt {
-                let resetDate = resetsAt.formatted(.dateTime.month().day().locale(L10n.locale))
+                quotaResetTimer = Timer.scheduledTimer(withTimeInterval: max(0.01, resetsAt.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+                    Task { @MainActor in self?.updateTitle() }
+                }
+                let resetDate = resetsAt.formatted(.dateTime.month().day().hour().minute().locale(L10n.locale))
                 details.append(L10n.text("reset_format", resetDate))
             }
             if let total {
@@ -213,7 +246,7 @@ final class StatusItemController: NSObject {
             let tokenDetail = total.map {
                 "・" + L10n.text("today_tokens", $0.formatted(.number.locale(L10n.locale)))
             } ?? ""
-            let detail = L10n.text("no_limit") + tokenDetail
+            let detail = selection.displayName + " · " + L10n.text("no_limit") + tokenDetail
             statusItem.button?.toolTip = detail
             statusItem.button?.setAccessibilityLabel("\(shortName)、\(detail)")
         }

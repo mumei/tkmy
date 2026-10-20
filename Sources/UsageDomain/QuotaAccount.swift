@@ -30,7 +30,7 @@ public struct QuotaAccount: Codable, Hashable, Identifiable, Sendable {
         [email, organizationName ?? organizationID, subscriptionType].compactMap { $0 }.joined(separator: " · ")
     }
     public func assigning(_ sample: UsageLimitSnapshot) -> UsageLimitSnapshot {
-        UsageLimitSnapshot(source: source, limitID: limitID, usedPercent: sample.usedPercent,
+        UsageLimitSnapshot(source: source, limitID: sample.isFableQuota ? "claude-code-fable@" + id : limitID, usedPercent: sample.usedPercent,
                            windowMinutes: sample.windowMinutes, resetsAt: sample.resetsAt,
                            observedAt: sample.observedAt, lastObservedAt: sample.lastObservedAt,
                            resetEpochID: sample.resetEpochID)
@@ -38,8 +38,12 @@ public struct QuotaAccount: Codable, Hashable, Identifiable, Sendable {
 }
 
 public extension UsageLimitSnapshot {
+    var isFableQuota: Bool {
+        source == .claudeCode && (limitID == "claude-code-fable" || limitID.hasPrefix("claude-code-fable@"))
+    }
+
     var quotaAccountID: String? {
-        let prefix = source == .codex ? "codex@" : "claude-code@"
+        let prefix = source == .codex ? "codex@" : (isFableQuota ? "claude-code-fable@" : "claude-code@")
         guard limitID.hasPrefix(prefix) else { return nil }
         return String(limitID.dropFirst(prefix.count))
     }
