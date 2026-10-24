@@ -58,6 +58,17 @@ Native installs in `~/.local/bin`, Homebrew installs, and executables on TKMY's 
 
 To verify on another Mac with a build containing this change: check `claude --version`, confirm that `/usage` in the same Claude Code login shows a general weekly or 5-hour allowance, then choose **Refresh** on TKMY's Claude menu with **Show remaining percentage** enabled. Compare the same time window, rather than context usage or a model-specific limit. For troubleshooting, share only the two app/CLI versions, the display setting, whether `/usage` has that window, and whether TKMY shows a percentage or `—`; do not share transcripts, credential files, tokens, or raw CLI responses.
 
+## Claude account folders
+
+In Settings → Claude account folders, enter existing configuration folders as absolute paths, one per line. TKMY checks System default and every configured folder separately. Select the folder supplying the menu-bar quota. Successful readings from all configured folders are saved in account-separated history. Missing folders and unverified selected quotas never fall back to another login. A supported Claude Code CLI (reviewed contract: 2.1.289+) and already signed-in folders are required.
+
+This supports tools that launch accounts in separate `CLAUDE_CONFIG_DIR` folders. TKMY does not discover Orca accounts, sign in, copy credentials, or switch a shared login. A shell function or a later terminal environment change is not inherited by an already running TKMY; configure the relevant folders explicitly.
+
+The usage process's initialize account is checked as well as identity before and after acquisition. The SDK's organization field may be a display name; stable organization IDs still come from `auth status`. Identically named organizations remain a metadata limitation of this SDK contract, not a verified live-account scenario. The reported problem on another Mac has not been verified as resolved there.
+
+The history account picker defaults to **Follow current account**. Explicit historical and unknown-account selections remain pinned. These are quota histories; transcript token accounting keeps its existing configured/default log roots.
+
+
 ## Account-separated quota history
 
 Both Codex and Claude Code show the 5-hour and weekly remaining percentages together, with blue and orange series and a legend containing each window's last confirmed value/time. The existing six elapsed-time ranges remain available. Missing windows show `—`; resets and missing observations never imply a replenished or zero allowance. Other returned window lengths are displayed as reported.

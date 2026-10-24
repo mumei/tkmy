@@ -169,10 +169,12 @@ struct UsageLimitHistoryView: View {
         .onChange(of: range) { _, _ in synchronizeSelectedBucket() }
         .onChange(of: history) { _, _ in synchronizeSelectedBucket() }
         .onChange(of: selectedAccountID) { _, _ in synchronizeSelectedBucket() }
+        .onChange(of: activeAccountID) { _, _ in synchronizeSelectedBucket() }
     }
 
     private var accountPicker: some View {
         Picker(L10n.text("quota_account"), selection: $selectedAccountID) {
+            Text(L10n.text("quota_account_follow_current")).tag(Optional<String>.none)
             Text(L10n.text("quota_account_unknown")).tag(Optional("anonymous"))
             ForEach(accounts) { account in
                 Text(account.displayName).tag(Optional(account.id))

@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import ServiceManagement
 import UsageDomain
+import UsageIngestion
 
 protocol LaunchAtLoginService {
     var status: SMAppService.Status { get }
@@ -55,6 +56,16 @@ final class AppSettings: ObservableObject {
     }
     @Published var claudeQuotaWindow: QuotaWindow {
         didSet { defaults.set(claudeQuotaWindow.rawValue, forKey: "claudeQuotaWindow") }
+    }
+
+    @Published var claudeQuotaDirectories: String {
+        didSet { defaults.set(claudeQuotaDirectories, forKey: "claudeQuotaDirectories") }
+    }
+    @Published var claudeQuotaProfileID: String {
+        didSet { defaults.set(claudeQuotaProfileID, forKey: "claudeQuotaProfileID") }
+    }
+    var claudeProfileConfiguration: ClaudeQuotaProfileConfiguration {
+        ClaudeQuotaProfileConfiguration(directories: claudeQuotaDirectories, selectedProfileID: claudeQuotaProfileID)
     }
 
     func quotaWindow(for source: UsageSource) -> QuotaWindow {
@@ -114,6 +125,8 @@ final class AppSettings: ObservableObject {
     init(defaults: UserDefaults = .standard, loginService: any LaunchAtLoginService = SMAppService.mainApp) {
         self.defaults = defaults
         self.loginService = loginService
+        claudeQuotaDirectories = defaults.string(forKey: "claudeQuotaDirectories") ?? ""
+        claudeQuotaProfileID = defaults.string(forKey: "claudeQuotaProfileID") ?? "system"
         codexQuotaWindow = defaults.string(forKey: "codexQuotaWindow").flatMap(QuotaWindow.init(rawValue:)).flatMap { $0 == .fable ? nil : $0 } ?? .weekly
         claudeQuotaWindow = defaults.string(forKey: "claudeQuotaWindow").flatMap(QuotaWindow.init(rawValue:)) ?? .weekly
         launchAtLogin = loginService.status == .enabled

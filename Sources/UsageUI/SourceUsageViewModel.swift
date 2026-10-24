@@ -231,7 +231,12 @@ public final class SourceUsageViewModel: ObservableObject {
             .sorted { $0.observedAt < $1.observedAt }
         quotaAccounts = snapshot.quotaAccounts.filter { $0.source == source }
         activeQuotaAccountID = snapshot.activeQuotaAccountID
-        if selectedQuotaAccountID == nil { selectedQuotaAccountID = activeQuotaAccountID ?? "anonymous" }
+        // nil means follow the currently selected acquisition profile/account.
+        // An explicit history choice, including anonymous, remains pinned.
+        if let selectedQuotaAccountID, selectedQuotaAccountID != "anonymous",
+           !quotaAccounts.contains(where: { $0.id == selectedQuotaAccountID }) {
+            self.selectedQuotaAccountID = nil
+        }
         quotaTokenSummary = snapshot.quotaTokenSummary.flatMap {
             $0.source == source ? $0 : nil
         }

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import UpdateSupport
 import UsageDomain
 import UsagePricing
@@ -15,12 +16,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindowController: SettingsWindowController?
     private var isRefreshing = false
     private var refreshPending = false
+    private var settingsCancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             let store = try SQLiteUsageStore()
             let calculator = try UsagePriceCalculator.bundled()
-            let coordinator = UsageCoordinator(store: store, calculator: calculator)
+            let settings = AppSettings()
+            let coordinator = UsageCoordinator(store: store, calculator: calculator,
+                claudeProfileConfiguration: { await MainActor.run { settings.claudeProfileConfiguration } })
             self.coordinator = coordinator
 
             let codexModel = makeViewModel(source: .codex, coordinator: coordinator)
@@ -28,7 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewModels = [codexModel, claudeModel]
 
             let updates = UpdateController()
-            let settings = AppSettings()
             let settingsWindowController = SettingsWindowController(
                 settings: settings,
                 updateController: updates
@@ -54,6 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 statusControllers.append(controller)
             }
+            settings.$claudeQuotaDirectories.combineLatest(settings.$claudeQuotaProfileID)
+                .dropFirst()
+                .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+                .sink { [weak self] _ in Task { @MainActor in await self?.refreshAll() } }
+                .store(in: &settingsCancellables)
             installWatchers(coordinator: coordinator)
             // FSEvents provides normal refreshes. Keep only a low-frequency
             // fallback so an idle menu-bar app does not rescan large histories

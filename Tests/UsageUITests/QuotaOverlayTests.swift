@@ -39,7 +39,7 @@ func accountSelectionSurvivesRefreshAndDoesNotCrossSources(source: UsageSource) 
     let model = SourceUsageViewModel(source: source)
     let initial = SourceUsageSnapshot(source: source, dailyUsage: [], quotaAccounts: [a, b, other], activeQuotaAccountID: a.id)
     model.apply(.ready(initial))
-    #expect(model.selectedQuotaAccountID == a.id)
+    #expect(model.selectedQuotaAccountID == nil)
     #expect(model.quotaAccounts == [a, b])
     model.selectedQuotaAccountID = b.id
     model.selectedQuotaHistoryRange = .twelveHours
@@ -85,4 +85,26 @@ func quotaOverlayAccountScreenshots(source: UsageSource) throws {
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: folder.appendingPathComponent("overlay-\(source.rawValue)-\(selected.id == current.id ? "current" : "historical").png"))
     }
+}
+
+@MainActor
+@Test(arguments: [UsageSource.codex, .claudeCode])
+func automaticHistorySelectionFollowsRecoveryAndAccountChangeButPreservesExplicitChoice(source: UsageSource) {
+    let model = SourceUsageViewModel(source: source)
+    let a = QuotaAccount(source: source, email: "a@example.com")
+    let b = QuotaAccount(source: source, email: "b@example.com")
+    model.apply(.ready(SourceUsageSnapshot(source: source, dailyUsage: [])))
+    #expect(model.selectedQuotaAccountID == nil)
+    model.apply(.ready(SourceUsageSnapshot(source: source, dailyUsage: [], quotaAccounts: [a], activeQuotaAccountID: a.id)))
+    #expect(model.selectedQuotaAccountID == nil)
+    #expect(model.activeQuotaAccountID == a.id)
+    model.apply(.ready(SourceUsageSnapshot(source: source, dailyUsage: [], quotaAccounts: [a,b], activeQuotaAccountID: b.id)))
+    #expect(model.selectedQuotaAccountID == nil)
+    #expect(model.activeQuotaAccountID == b.id)
+    model.selectedQuotaAccountID = a.id
+    model.apply(.ready(SourceUsageSnapshot(source: source, dailyUsage: [], quotaAccounts: [a,b], activeQuotaAccountID: b.id)))
+    #expect(model.selectedQuotaAccountID == a.id)
+    model.selectedQuotaAccountID = "anonymous"
+    model.apply(.ready(SourceUsageSnapshot(source: source, dailyUsage: [], quotaAccounts: [a,b], activeQuotaAccountID: b.id)))
+    #expect(model.selectedQuotaAccountID == "anonymous")
 }
