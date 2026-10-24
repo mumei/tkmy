@@ -85,7 +85,7 @@ private func claudeWindow(_ used: Any, reset: Any? = nil) -> [String: Any] {
     case " $* " in *" --setting-sources= "*) ;; *) exit 1;; esac
     read initialize
     case "$initialize" in *'"initialize"'*) ;; *) exit 1;; esac
-    echo '{"type":"control_response","response":{"subtype":"success","request_id":"tkmy-init","response":{}}}'
+    echo '{"type":"control_response","response":{"subtype":"success","request_id":"tkmy-init","response":{"account":{"email":"test@example.com","apiProvider":"firstParty"}}}}'
     read usage
     case "$usage" in *'"get_usage"'*) ;; *) exit 1;; esac
     case "$usage" in *'"skip_behaviors":true'*) ;; *) exit 1;; esac

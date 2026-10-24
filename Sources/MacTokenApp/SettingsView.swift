@@ -110,6 +110,8 @@ struct SettingsView: View {
                 }
             }
 
+            claudeAccountFoldersSection
+
             Section(L10n.text("updates")) {
                 Toggle(L10n.text("automatic_updates"), isOn: $automaticallyChecksForUpdates)
                     .disabled(!updateController.isConfigured)
@@ -156,6 +158,27 @@ struct SettingsView: View {
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
             automaticallyChecksForUpdates = updateController.automaticallyChecksForUpdates
+        }
+    }
+
+    var claudeAccountFoldersSection: some View {
+        Section(L10n.text("claude_profile_section")) {
+            Text(L10n.text("claude_profile_hint"))
+                .font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $settings.claudeQuotaDirectories)
+                .font(.system(.caption, design: .monospaced))
+                .frame(height: 64)
+                .accessibilityLabel(L10n.text("claude_profile_directories"))
+            Picker(L10n.text("claude_profile_meter"), selection: Binding(
+                get: { settings.claudeProfileConfiguration.selectedProfileID },
+                set: { settings.claudeQuotaProfileID = $0 }
+            )) {
+                ForEach(settings.claudeProfileConfiguration.profiles) { profile in
+                    Text(profile.configDirectory ?? L10n.text("claude_profile_system")).tag(profile.id)
+                }
+            }
+            Text(L10n.text("claude_profile_no_login"))
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 

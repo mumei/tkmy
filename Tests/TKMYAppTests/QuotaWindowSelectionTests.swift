@@ -99,6 +99,20 @@ final class QuotaWindowSelectionTests: XCTestCase {
         try capture(NSHostingView(rootView: view), name: "quota-fable-history", width: SourceUsagePopoverSizing.width, height: SourceUsagePopoverSizing.contentHeight(for: []))
     }
 
+    @MainActor
+    func testClaudeAccountFolderSettingsRenderOffscreen() throws {
+        _ = NSApplication.shared
+        let name = "TKMYClaudeProfileQA.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = AppSettings(defaults: defaults)
+        settings.claudeQuotaDirectories = "/example/Claude account A\n/example/Claude account B"
+        settings.claudeQuotaProfileID = "/example/Claude account B"
+        let view = SettingsView(settings: settings, updateController: UpdateController())
+        try capture(NSHostingView(rootView: Form { view.claudeAccountFoldersSection }.formStyle(.grouped)),
+            name: "claude-account-folder-settings", width: 520, height: 360)
+    }
+
     @MainActor private func flush() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
     private func sample(_ source: UsageSource, _ minutes: Int, _ used: Double, _ now: Date, fable: Bool = false) -> UsageLimitSnapshot {
         UsageLimitSnapshot(source: source, limitID: fable ? "claude-code-fable" : (source == .codex ? "codex" : "claude-code"), usedPercent: used,
@@ -113,5 +127,21 @@ final class QuotaWindowSelectionTests: XCTestCase {
         let folder = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".build/ui-snapshots")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: folder.appendingPathComponent(name + ".png"))
+    }
+}
+
+extension QuotaWindowSelectionTests {
+    @MainActor func testClaudeFolderSettingsPersistWithoutChangingAuthentication() throws {
+        let name = "TKMYClaudeProfiles.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = AppSettings(defaults: defaults)
+        settings.claudeQuotaDirectories = "/existing/profile a\n/existing/profile b"
+        settings.claudeQuotaProfileID = "/existing/profile b"
+        let restored = AppSettings(defaults: defaults)
+        XCTAssertEqual(restored.claudeProfileConfiguration.profiles.count, 3)
+        XCTAssertEqual(restored.claudeProfileConfiguration.selectedProfileID, "/existing/profile b")
+        restored.claudeQuotaDirectories = "/existing/profile a"
+        XCTAssertEqual(restored.claudeProfileConfiguration.selectedProfileID, "system")
     }
 }

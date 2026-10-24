@@ -92,7 +92,7 @@ func codexProviderRejectsSwitchingDuringProtocolRead(mode: String) async throws 
     fi
     if [ "$1" = "--version" ]; then echo '2.1.289 (Claude Code)'; exit 0; fi
     read init
-    echo '{"type":"control_response","response":{"subtype":"success","request_id":"tkmy-init","response":{}}}'
+    echo '{"type":"control_response","response":{"subtype":"success","request_id":"tkmy-init","response":{"account":{"email":"a@example.com","apiProvider":"firstParty"}}}}'
     read quota
     touch "$TKMY_TEST_STATE"
     echo '{"type":"control_response","response":{"subtype":"success","request_id":"tkmy-usage","response":{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":0,"resets_at":"2030-01-01T00:00:00Z"}}}}}'

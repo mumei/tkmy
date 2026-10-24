@@ -16,22 +16,27 @@ public struct ClaudeAccountRateLimitProvider: Sendable {
     private let executableURL: URL?
     private let environment: [String: String]
     private let timeout: TimeInterval
+    private let configDirectory: URL?
 
     public init(
         executableURL: URL? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        timeout: TimeInterval = 10
+        timeout: TimeInterval = 10,
+        configDirectory: URL? = nil
     ) {
-        self.environment = environment
+        var scopedEnvironment = environment
+        if let configDirectory { scopedEnvironment["CLAUDE_CONFIG_DIR"] = configDirectory.standardizedFileURL.path }
+        self.environment = scopedEnvironment
+        self.configDirectory = configDirectory
         self.executableURL = executableURL ?? Self.findExecutable(environment: environment)
         self.timeout = timeout.isFinite ? max(1, timeout) : 10
     }
 
     public func fetch(observedAt: Date = Date()) async -> ClaudeAccountRateLimitResult {
-        guard let executableURL else { return .unavailable }
+        guard configurationExists, let executableURL else { return .unavailable }
         return await Task.detached(priority: .utility) {
             guard let before = Self.readIdentity(executableURL: executableURL, environment: environment, timeout: timeout) else { return .unavailable }
-            let result = Self.fetchSynchronously(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt)
+            let result = Self.fetchSynchronously(executableURL: executableURL, environment: environment, timeout: timeout, observedAt: observedAt, expectedAccount: before)
             guard let after = Self.readIdentity(executableURL: executableURL, environment: environment, timeout: timeout), before.id == after.id else { return .unavailable }
             if case let .available(samples) = result { return .identified(after, samples.map(after.assigning)) }
             return result
@@ -39,10 +44,35 @@ public struct ClaudeAccountRateLimitProvider: Sendable {
     }
 
     public func identity() async -> QuotaAccount? {
-        guard let executableURL else { return nil }
+        guard configurationExists, let executableURL else { return nil }
         return await Task.detached(priority: .utility) {
             Self.readIdentity(executableURL: executableURL, environment: environment, timeout: timeout)
         }.value
+    }
+
+    private var configurationExists: Bool {
+        guard let configDirectory else { return true }
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: configDirectory.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    // The initialize response belongs to the very process answering get_usage.
+    // Keep the before/after stable organization-ID checks as well: SDK organization
+    // can be a display name, not a stable organization ID.
+    static func sessionMatches(_ account: [String: Any]?, expected: QuotaAccount) -> Bool {
+        guard let account, let email = account["email"] as? String,
+              email.trimmingCharacters(in: .whitespacesAndNewlines) == expected.email,
+              account["apiProvider"] as? String == "firstParty" else { return false }
+        if let value = account["apiKeySource"], !(value is NSNull) {
+            guard let source = value as? String, source == "none" else { return false }
+        }
+        if let organizationID = expected.organizationID {
+            guard let organization = account["organization"] as? String,
+                  organization == organizationID || organization == expected.organizationName else { return false }
+        } else if let organization = account["organization"], !(organization is NSNull) {
+            guard let value = organization as? String, value.isEmpty else { return false }
+        }
+        return true
     }
 
     static func account(from data: Data) -> QuotaAccount? {
@@ -130,7 +160,7 @@ public struct ClaudeAccountRateLimitProvider: Sendable {
 
     private static func fetchSynchronously(
         executableURL: URL, environment: [String: String],
-        timeout: TimeInterval, observedAt: Date
+        timeout: TimeInterval, observedAt: Date, expectedAccount: QuotaAccount
     ) -> ClaudeAccountRateLimitResult {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tkmy-quota-" + UUID().uuidString)
         do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
@@ -186,6 +216,9 @@ public struct ClaudeAccountRateLimitProvider: Sendable {
                   let object = IngestionSupport.jsonObject(initialized),
                   let response = object["response"] as? [String: Any],
                   response["subtype"] as? String == "success" else { return .failed }
+            guard let initializedBody = response["response"] as? [String: Any],
+                  sessionMatches(initializedBody["account"] as? [String: Any], expected: expectedAccount)
+            else { return .unavailable }
             try input.fileHandleForWriting.write(contentsOf: request(
                 id: "tkmy-usage", body: ["subtype": "get_usage", "skip_behaviors": true]
             ))
